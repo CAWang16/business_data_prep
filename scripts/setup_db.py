@@ -4,8 +4,13 @@ import os
 import time
 
 
-excel_file = "online_retail_II.xlsx"
-db_file = "retail.db"
+
+raw_file_path = "data/raw"
+db_path = "database/"
+
+excel_file = os.path.join(raw_file_path, "online_retail_II.xlsx")
+print(excel_file)
+db_file = os.path.join(db_path, "retail.db")
 table_name = "online_retail"
 
 
