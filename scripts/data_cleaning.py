@@ -1,6 +1,9 @@
 import pandas as pd
+import os
 
-df2_sheets = pd.read_excel("online_retail_II.xlsx", sheet_name=None, dtype={"Customer ID": str})
+data_location = 'data/raw'
+
+df2_sheets = pd.read_excel(os.path.join(data_location, "online_retail_II.xlsx"), sheet_name=None, dtype={"Customer ID": str})
 
 df2 = pd.concat(df2_sheets.values(), ignore_index=True)
 

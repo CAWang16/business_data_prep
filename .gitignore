@@ -24,3 +24,5 @@ __pycache__/
 .Rhistory
 .RData
 test_*
+
+figures/
