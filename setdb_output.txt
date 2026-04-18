@@ -1,0 +1,16 @@
+Reading online_retail_II.xlsx from the dedicated folder.
+Note: This file contain more than 1M rows and may take few minutes
+Found 2 sheets: ['Year 2009-2010', 'Year 2010-2011']
+Loading sheet Year 2009-2010
+Done. 525461 rows loaded in 56.78591346740723s
+Loading sheet Year 2010-2011
+Done. 541910 rows loaded in 60.89864921569824s
+Combining sheet
+Total: 1067371 rows, 8 columns
+Writing to retail.db...
+Finished. Written in 10.838061571121216s
+Data saved to retail.db
+To use in R: 
+library(RSQLite)
+con <- dbConnect(RSQLite::SQLite(), 'retail.db')
+df <- dbReadTable(con, 'online_retail')
