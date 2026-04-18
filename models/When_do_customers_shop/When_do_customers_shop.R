@@ -8,7 +8,9 @@ library(ggplot2)
 library(stringr)
 library(MASS)      # LDA
 
-setwd("../")
+# change wd to where ever the retail.db file lives
+# on my machine, it lives in business_data_prep
+setwd("../../")
 
 con <- dbConnect(RSQLite::SQLite(), "retail.db")
 

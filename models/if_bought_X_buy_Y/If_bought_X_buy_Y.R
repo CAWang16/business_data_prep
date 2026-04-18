@@ -1,5 +1,4 @@
-# "Seasonal products and bulk buying" -> Regressions splines/GAM, Random Forest importance
-
+# If bought X, buy Y -> Boosting (gbm), Random Forest, Association Rules
 
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 library(RSQLite)
@@ -8,8 +7,12 @@ library(lubridate)
 library(ggplot2)
 library(stringr)
 library(randomForest)
-library(gam)       # GAM / smoothing splines
+library(gbm)       # Boosting
 library(splines)   # bs()
+
+# change wd to where ever the retail.db file lives
+# on my machine, it lives in business_data_prep
+setwd("../../")
 
 con <- dbConnect(RSQLite::SQLite(), "retail.db")
 
@@ -27,4 +30,4 @@ df <- dbReadTable(con, "online_retail") |>
   rename(Revenue = TotalPrice) |>
   filter(!IsCancelled, Quantity > 0, Price > 0)
 
-setwd("C:/Users/taylo/OneDrive/Desktop/CSP571/Project")
+# call dbDisconnect(con) when finished working with a connection 
