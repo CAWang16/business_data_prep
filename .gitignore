@@ -1,3 +1,12 @@
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+*.db
+*.sqlite
+*.sqlite3
+
 # Data files - teammates run setup_db.py to generate these locally
 *.xlsx
 *.csv
