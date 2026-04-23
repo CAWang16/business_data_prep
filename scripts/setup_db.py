@@ -4,9 +4,10 @@ import os
 import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-raw_file_path = os.path.join(BASE_DIR, "..", "data", "raw")
+raw_file_path = os.path.join(BASE_DIR, "..", "data", "processed")
 db_path = os.path.join(BASE_DIR, "..", "database")
 
+# i move the data_cleaning.py outputs to ../data/processed/
 csv_file = os.path.join(raw_file_path, "online_retail_II_cleaned.csv") # anders's cleaned file
 db_file = os.path.join(db_path, "retail.db")
 table_name = "online_retail"

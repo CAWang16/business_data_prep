@@ -11,8 +11,8 @@ library(gbm)       # Boosting
 library(splines)   # bs()
 
 # change wd to where ever the retail.db file lives
-# on my machine, it lives in business_data_prep
-setwd("../../")
+# on my machine, it lives in business_data_prep database folder
+setwd("../../database/")
 
 con <- dbConnect(RSQLite::SQLite(), "retail.db")
 
