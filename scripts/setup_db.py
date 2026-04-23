@@ -5,8 +5,8 @@ import time
 
 
 
-raw_file_path = "../data/raw"
-db_path = "../database/"
+raw_file_path = "data/raw"
+db_path = "database/"
 
 excel_file = os.path.join(raw_file_path, "online_retail_II.xlsx")
 print(excel_file)
