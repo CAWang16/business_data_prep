@@ -14,6 +14,11 @@ library(ggplot2)
 library(stringr)
 library(MASS)      # LDA
 
+# seting correct wd
+setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
+
+
+# establishing db connection
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
