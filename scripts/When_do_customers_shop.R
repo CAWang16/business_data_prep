@@ -6,7 +6,7 @@
 # The model is then tested against non-UK data to see if peak-hour patterns hold internationally. 
 # A heatmap of average revenue by hour and day is produced as the main visualization.
 
-# ── SETUP ──────────────────────────────────────────────────────────────────────
+# ── SETUP ─────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)
 library(lubridate)
@@ -14,7 +14,7 @@ library(ggplot2)
 library(stringr)
 library(MASS)      # LDA
 
-# seting correct wd
+# ── STEP 0: establishing db connection ────────────────────────────────────────
 setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
@@ -33,54 +33,126 @@ df <- dbReadTable(con, "online_retail_clean") |>
     Quarter     = quarter(InvoiceDate)
   )
 
-# call dbDisconnect(con) when finished working with a connection 
+dbDisconnect(con) # finished working with a connection 
 
-# METHOD: Logistic Regression + LDA (same style as hw2 mpg01 / Boston crim01)
-# We create a binary target: IsPeakHour (1 = top-revenue hours, 0 = off-peak)
-# then model it using Hour and DayOfWeek as predictors.
+# Logistic Regression + LDA (same style as hw2 mpg01 / Boston crim01)
+# Binary target: IsPeakHour (1 = top-revenue hours, 0 = off-peak)
+# Train/test strategy:
+#   - 80% of UK data -> training
+#   - 20% of UK data -> in-distribution test
+#   - All non-UK data -> out-of-distribution test
+# Rationale: UK is the dominant market; non-UK serves as an OOD validation set
+# to assess international generalisability.
 
-# Step 1: define peak hour (top tercile of avg revenue per hour)
-hour_revenue <- df |>
+# ── STEP 1: UK/non-UK split ────────────────────────────────────────────────────
+uk_data   <- df |> filter(Country == "United Kingdom")
+nouk_data <- df |> filter(Country != "United Kingdom")
+
+# ── STEP 2: define peak hours from training data only ─────────────────────────
+set.seed(1)
+train_idx    <- sample(1:nrow(uk_data), 0.8 * nrow(uk_data))
+uk_train_raw <- uk_data[train_idx, ]
+uk_test_raw  <- uk_data[-train_idx, ]
+
+hour_revenue_train <- uk_train_raw |>
   group_by(Hour) |>
-  summarise(AvgRevenue = mean(Revenue))
+  summarise(AvgRevenue = mean(Revenue), .groups = "drop")
 
-peak_threshold <- quantile(hour_revenue$AvgRevenue, 0.67)
+peak_threshold <- quantile(hour_revenue_train$AvgRevenue, 0.67)
 
-df_time <- df |>
-  left_join(hour_revenue, by = "Hour") |>
-  mutate(IsPeakHour = ifelse(AvgRevenue >= peak_threshold, 1, 0))
+# Label rows — use replace_na(0) to handle any hours missing from training
+label_peak <- function(data) {
+  data |>
+    left_join(hour_revenue_train, by = "Hour") |>
+    mutate(IsPeakHour = ifelse(!is.na(AvgRevenue) & AvgRevenue >= peak_threshold, 1, 0))
+}
 
-# Step 2: train/test split — UK = train, non-UK = test (out-of-distribution)
-# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
-# held-out out-of-distribution test to assess how well patterns generalise
-# internationally (see demand_spike_report.docx for full justification).
-train_t <- df_time |> filter(Country == "United Kingdom")
-test_t  <- df_time |> filter(Country != "United Kingdom")
+uk_train  <- label_peak(uk_train_raw)
+uk_test   <- label_peak(uk_test_raw)
+nouk_test <- label_peak(nouk_data)
 
-# Step 3: Logistic Regression (same as hw2 glm with family = binomial)
-glm_time <- glm(IsPeakHour ~ Hour + DayOfWeek + MonthNum,
-                data = train_t, family = binomial)
+
+# Aggregate to invoice level before modeling (one row per transaction)
+uk_train_inv <- uk_train |>
+  group_by(InvoiceNo) |>
+  summarise(
+    IsPeakHour = first(IsPeakHour),
+    TotalRevenue = sum(Revenue),
+    TotalQty = sum(Quantity),
+    NumItems = n(),
+    DayOfWeek = first(DayOfWeek),
+    MonthNum = first(MonthNum),
+    .groups = "drop"
+  )
+
+uk_test_inv <- uk_test |>
+  group_by(InvoiceNo) |>
+  summarise(
+    IsPeakHour = first(IsPeakHour),
+    TotalRevenue = sum(Revenue),
+    TotalQty = sum(Quantity),
+    NumItems = n(),
+    DayOfWeek = first(DayOfWeek),
+    MonthNum = first(MonthNum),
+    .groups = "drop"
+  )
+
+nouk_test_inv <- nouk_test |>
+  group_by(InvoiceNo) |>
+  summarise(
+    IsPeakHour = first(IsPeakHour),
+    TotalRevenue = sum(Revenue),
+    TotalQty = sum(Quantity),
+    NumItems = n(),
+    DayOfWeek = first(DayOfWeek),
+    MonthNum = first(MonthNum),
+    .groups = "drop"
+  )
+
+# ── STEP 3: reframe — predict IsPeakHour from BASKET features, not Hour ───────
+# Hour is the definition of the label so it can't be a predictor.
+# Instead use: order value, quantity, number of items, day of week, month.
+glm_time <- glm(IsPeakHour ~ TotalRevenue + TotalQty + NumItems + DayOfWeek + MonthNum,
+                data = uk_train_inv, family = binomial)
 summary(glm_time)
 
-glm_probs <- predict(glm_time, test_t, type = "response")
-glm_class <- ifelse(glm_probs > 0.5, 1, 0)
-table(glm_class, test_t$IsPeakHour)          # confusion matrix
-mean(glm_class != test_t$IsPeakHour)         # test error rate
+# UK test
+glm_probs_uk <- predict(glm_time, uk_test_inv, type = "response")
+glm_class_uk <- ifelse(glm_probs_uk > 0.5, 1, 0)
+cat("\n--- Logistic Regression: UK Test (in-distribution) ---\n")
+print(table(Predicted = glm_class_uk, Actual = uk_test_inv$IsPeakHour))
+cat("Test error rate:", mean(glm_class_uk != uk_test_inv$IsPeakHour), "\n")
 
-# Step 4: LDA (same as hw2 lda on mpg01)
-lda_time  <- lda(IsPeakHour ~ Hour + DayOfWeek + MonthNum, data = train_t)
-lda_pred  <- predict(lda_time, test_t)
-table(lda_pred$class, test_t$IsPeakHour)     # confusion matrix
-mean(lda_pred$class != test_t$IsPeakHour)    # test error rate
+# non-UK test
+glm_probs_nouk <- predict(glm_time, nouk_test_inv, type = "response")
+glm_class_nouk <- ifelse(glm_probs_nouk > 0.5, 1, 0)
+cat("\n--- Logistic Regression: non-UK Test (out-of-distribution) ---\n")
+print(table(Predicted = glm_class_nouk, Actual = nouk_test_inv$IsPeakHour))
+cat("Test error rate:", mean(glm_class_nouk != nouk_test_inv$IsPeakHour), "\n")
 
-# Step 5: visualize — average revenue by hour and day
+# ── STEP 4: LDA ───────────────────────────────────────────────────────────────
+lda_time <- lda(IsPeakHour ~ TotalRevenue + TotalQty + DayOfWeek + MonthNum,
+                data = uk_train_inv)
+
+lda_pred_uk <- predict(lda_time, uk_test_inv)
+cat("\n--- LDA: UK Test (in-distribution) ---\n")
+print(table(Predicted = lda_pred_uk$class, Actual = uk_test_inv$IsPeakHour))
+cat("Test error rate:", mean(lda_pred_uk$class != uk_test_inv$IsPeakHour), "\n")
+
+lda_pred_nouk <- predict(lda_time, nouk_test_inv)
+cat("\n--- LDA: non-UK Test (out-of-distribution) ---\n")
+print(table(Predicted = lda_pred_nouk$class, Actual = nouk_test_inv$IsPeakHour))
+cat("Test error rate:", mean(lda_pred_nouk$class != nouk_test_inv$IsPeakHour), "\n")
+
+# ── STEP 5: Visualize ──────────────────────────────────────────────────────────
 df |>
   group_by(Hour, DayOfWeek) |>
   summarise(AvgRevenue = mean(Revenue), .groups = "drop") |>
   ggplot(aes(x = Hour, y = factor(DayOfWeek), fill = AvgRevenue)) +
   geom_tile() +
   scale_fill_viridis_c() +
-  scale_y_discrete(labels = c("Mon","Tue","Wed","Thu","Fri","Sat","Sun")) +
+  scale_y_discrete(labels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) +
   labs(title = "Q3: Average Revenue by Hour and Day of Week",
-       x = "Hour of Day", y = NULL, fill = "Avg Revenue (£)") +
+       x = "Hour of Day", y = NULL, fill = "Avg Revenue (GBP)") +
   theme_minimal()
+

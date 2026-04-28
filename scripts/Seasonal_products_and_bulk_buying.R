@@ -6,7 +6,7 @@
 # or order frequency — are most important for predicting bulk purchases. 
 # The non-UK product-month data serves as the out-of-distribution test set for the Random Forest.
 
-# ── SETUP ──────────────────────────────────────────────────────────────────────
+# ── SETUP ─────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)
 library(lubridate)
@@ -15,12 +15,13 @@ library(stringr)
 library(randomForest)
 library(gam)       # GAM / smoothing splines
 library(splines)   # bs()
+library(boot)      # cv.glm()
 
 # seting correct wd
 setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
-# establishing db connection
+# ── STEP 0: establishing db connection ────────────────────────────────────────
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
@@ -35,75 +36,81 @@ df <- dbReadTable(con, "online_retail_clean") |>
     Quarter     = quarter(InvoiceDate)
   )
 
-# call dbDisconnect(con) when finished working with a connection 
+dbDisconnect(con) # finished working with a connection 
 
-# METHOD: GAM with smoothing splines (same as hw3 ch7 College Outstate question)
-# Models how Quantity sold changes smoothly across months, and whether
-# higher prices predict bulk purchases.
+# GAM with smoothing splines (same as hw3 ch7 College Outstate question) models
+# how quantity sold changes across months and with price.
+# Random Forest identifies which features drive bulk purchases.
+# Train/test strategy:
+#   - 80% of UK product-months -> training
+#   - 20% of UK product-months -> in-distribution test
+#   - All non-UK product-months -> out-of-distribution test
+# Rationale: UK is the dominant market; non-UK serves as an OOD validation set
+# to assess international generalisability.
 
-# Step 1: aggregate to product-month level
+# ── STEP 1: aggregate to product-month level by country ───────────────────────
 product_month <- df |>
-  group_by(StockCode, Description, MonthNum) |>
-  summarise(
-    TotalQty    = sum(Quantity),
-    AvgPrice    = mean(Price),
-    NumInvoices = n_distinct(Invoice),
-    .groups     = "drop"
-  ) |>
-  filter(TotalQty > 0) |>
-  na.omit()
-
-# Step 2: GAM — smooth effect of Month and Price on Quantity sold
-# s() applies smoothing spline, same as hw3 gam.fit with s(Expend, 4)
-gam_seasonal <- gam(TotalQty ~ s(MonthNum, 4) + s(AvgPrice, 4) + s(NumInvoices, 4),
-                    data = product_month)
-
-par(mfrow = c(1, 3))
-plot(gam_seasonal, se = TRUE, col = "blue")  # same plot style as hw3
-
-summary(gam_seasonal)  # check "Anova for Nonparametric Effects" for nonlinear vars
-
-# Step 3: regression spline on Month alone — compare df via CV (same as hw3 ch7 nox~dis)
-library(boot)
-cv_errors_season <- rep(NA, 11)
-
-for (i in 3:11) {
-  glm_sp <- glm(TotalQty ~ bs(MonthNum, df = i), data = product_month)
-  cv_errors_season[i] <- cv.glm(product_month, glm_sp)$delta[1]
-}
-
-best_df_season <- which.min(cv_errors_season)
-cat("Best spline df for seasonality:", best_df_season, "\n")
-
-# Step 4: Random Forest — which product features predict bulk buying?
-# Train/test split — UK = train, non-UK = test (out-of-distribution)
-# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
-# held-out out-of-distribution test to assess how well patterns generalise
-# internationally (see demand_spike_report.docx for full justification).
-product_month_country <- df |>
   group_by(StockCode, Description, MonthNum, Country) |>
   summarise(
     TotalQty    = sum(Quantity),
     AvgPrice    = mean(Price),
-    NumInvoices = n_distinct(Invoice),
+    NumInvoices = n_distinct(InvoiceNo),
     .groups     = "drop"
   ) |>
   filter(TotalQty > 0) |>
   na.omit()
 
-pm_train <- product_month_country |> filter(Country == "United Kingdom") |> select(-StockCode, -Description, -Country)
-pm_test  <- product_month_country |> filter(Country != "United Kingdom") |> select(-StockCode, -Description, -Country)
+# ── STEP 2: UK/non-UK split, then 80/20 within UK ─────────────────────────────
+uk_pm   <- product_month |> filter(Country == "United Kingdom")
+nouk_pm <- product_month |> filter(Country != "United Kingdom")
 
+set.seed(1)
+train_idx  <- sample(1:nrow(uk_pm), 0.8 * nrow(uk_pm))
+pm_train   <- uk_pm[train_idx, ]    # UK 80% — train
+pm_uk_test <- uk_pm[-train_idx, ]   # UK 20% — in-distribution test
+pm_nouk_test <- nouk_pm             # non-UK  — out-of-distribution test
+
+cat("Training rows (UK 80%):            ", nrow(pm_train), "\n")
+cat("In-distribution test (UK 20%):     ", nrow(pm_uk_test), "\n")
+cat("Out-of-distribution test (non-UK): ", nrow(pm_nouk_test), "\n")
+
+# ── STEP 3: GAM on training data ──────────────────────────────────────────────
+# s() applies smoothing spline, same as hw3 gam.fit with s(Expend, 4)
+gam_seasonal <- gam(TotalQty ~ s(MonthNum, 4) + s(AvgPrice, 4) + s(NumInvoices, 4),
+                    data = pm_train)
+
+par(mfrow = c(1, 3))
+plot(gam_seasonal, se = TRUE, col = "blue")
+summary(gam_seasonal)  # check "Anova for Nonparametric Effects"
+
+# ── STEP 4: regression spline CV to find best degrees of freedom ───────────────
+# Same CV approach as hw3 ch7 nox~dis — uses UK training data only
+cv_errors <- rep(NA, 11)
+for (i in 3:11) {
+  glm_sp <- glm(TotalQty ~ bs(MonthNum, df = i), data = pm_train)
+  cv_errors[i] <- cv.glm(pm_train, glm_sp, K = 5)$delta[1]
+}
+best_df <- which.min(cv_errors)
+cat("Best spline df for seasonality:", best_df, "\n")
+
+# ── STEP 5: Random Forest ─────────────────────────────────────────────────────
 set.seed(1)
 rf_bulk <- randomForest(TotalQty ~ MonthNum + AvgPrice + NumInvoices,
                         data       = pm_train,
+                        ntree      = 100,   # default is 500, but using 100 to speed up training due to size of data set
                         mtry       = 2,
                         importance = TRUE)
 
 importance(rf_bulk)
-varImpPlot(rf_bulk, main = "Q5: Variable Importance for Bulk Quantity")
+varImpPlot(rf_bulk, main = "Variable Importance for Bulk Quantity")
 
-rf_pred <- predict(rf_bulk, pm_test)
-cat("Random Forest test MSE (non-UK):",
-    mean((rf_pred - pm_test$TotalQty)^2), "\n")
+# UK test (in-distribution)
+rf_pred_uk <- predict(rf_bulk, pm_uk_test)
+cat("\n--- Random Forest: UK Test (in-distribution) ---\n")
+cat("Test MSE:", mean((rf_pred_uk - pm_uk_test$TotalQty)^2), "\n")
+
+# non-UK test (out-of-distribution)
+rf_pred_nouk <- predict(rf_bulk, pm_nouk_test)
+cat("\n--- Random Forest: non-UK Test (out-of-distribution) ---\n")
+cat("Test MSE:", mean((rf_pred_nouk - pm_nouk_test$TotalQty)^2), "\n")
 

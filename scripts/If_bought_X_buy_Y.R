@@ -6,7 +6,7 @@
 # A GBM (boosting) and a Random Forest are both trained on UK invoices and tested on non-UK invoices, 
 # with variable importance plots identifying which basket features most strongly predict co-purchase behavior.
 
-# ── SETUP ──────────────────────────────────────────────────────────────────────
+# ── SETUP ─────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)
 library(lubridate)
@@ -20,7 +20,7 @@ library(splines)   # bs()
 setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
-# establishing db connection
+# ── STEP 0: establishing db connection ────────────────────────────────────────
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
@@ -35,89 +35,117 @@ df <- dbReadTable(con, "online_retail_clean") |>
     Quarter     = quarter(InvoiceDate)
   )
 
-# call dbDisconnect(con) when finished working with a connection 
+dbDisconnect(con) # finished working with a connection 
 
-# METHOD: Boosting (gbm, same as hw4 ch8 Hitters/Caravan questions)
-# For each product, boost a binary outcome: "was this item bought in the
-# same basket?" using other product-level features as predictors.
-# Also uses Random Forest feature importance for a complementary view.
+# Boosting (gbm, same as hw4 ch8 Hitters/Caravan) predicts whether a given
+# invoice contains the most-bought product, using basket-level features.
+# Random Forest used for comparison and variable importance.
+# Train/test strategy:
+#   - 80% of UK invoices -> training
+#   - 20% of UK invoices -> in-distribution test
+#   - All non-UK invoices -> out-of-distribution test
+# Rationale: UK is the dominant market; non-UK serves as an OOD validation set
+# to assess international generalisability.
 
-# Step 1: build invoice-level feature matrix
-# For each invoice, create indicators for product categories
+# ── STEP 1: build invoice-level feature matrix (retain Country for splitting) ──
 invoice_features <- df |>
   mutate(Category = word(Description, 1)) |>
-  group_by(Invoice) |>
+  group_by(InvoiceNo, Country) |>
   summarise(
-    NumItems     = n(),
-    TotalRevenue = sum(Revenue),
-    AvgPrice     = mean(Price),
-    TotalQty     = sum(Quantity),
+    NumItems      = n(),
+    TotalRevenue  = sum(Revenue),
+    AvgPrice      = mean(Price),
+    TotalQty      = sum(Quantity),
     NumCategories = n_distinct(Category),
-    MonthNum     = first(MonthNum),
-    DayOfWeek    = first(DayOfWeek),
-    Hour         = first(Hour),
-    .groups      = "drop"
+    MonthNum      = first(MonthNum),
+    DayOfWeek     = first(DayOfWeek),
+    Hour          = first(Hour),
+    .groups       = "drop"
   )
 
-# Step 2: pick a target product to model (most commonly bought item)
+# ── STEP 2: define target product (most bought item, from UK training invoices) ─
+uk_invoices <- invoice_features |> filter(Country == "United Kingdom")
+
+set.seed(1)
+train_inv_idx <- sample(1:nrow(uk_invoices), 0.8 * nrow(uk_invoices))
+uk_train_inv  <- uk_invoices[train_inv_idx, ]
+uk_test_inv   <- uk_invoices[-train_inv_idx, ]
+nouk_inv      <- invoice_features |> filter(Country != "United Kingdom")
+
+# Identify top product from UK training invoices only (avoids leakage)
 top_product <- df |>
+  filter(InvoiceNo %in% uk_train_inv$InvoiceNo) |>
   count(Description, sort = TRUE) |>
   slice(1) |>
   pull(Description)
 
 cat("Modeling purchase likelihood for:", top_product, "\n")
 
-# invoices that contain the target product
+# ── STEP 3: label invoices that contain the target product ────────────────────
 target_invoices <- df |>
   filter(Description == top_product) |>
-  distinct(Invoice) |>
+  distinct(InvoiceNo) |>
   mutate(BoughtTarget = 1)
 
-model_df <- invoice_features |>
-  left_join(target_invoices, by = "Invoice") |>
-  mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
-  select(-Invoice) |>
-  na.omit()
+add_target <- function(inv_df) {
+  inv_df |>
+    left_join(target_invoices, by = "InvoiceNo") |>
+    mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
+    select(-InvoiceNo, -Country) |>
+    na.omit()
+}
 
-# Step 3: train/test split — UK = train, non-UK = test (out-of-distribution)
-# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
-# held-out out-of-distribution test to assess how well patterns generalise
-# internationally (see demand_spike_report.docx for full justification).
-# Join country back onto model_df before splitting
-model_df_country <- invoice_features |>
-  left_join(target_invoices, by = "Invoice") |>
-  mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
-  left_join(df |> distinct(Invoice, Country), by = "Invoice") |>
-  na.omit()
+train_boost   <- add_target(uk_train_inv)   # UK 80%
+test_uk_boost <- add_target(uk_test_inv)    # UK 20%
+test_nouk_boost <- add_target(nouk_inv)     # non-UK
 
-train_boost <- model_df_country |> filter(Country == "United Kingdom") |> select(-Invoice, -Country)
-test_boost  <- model_df_country |> filter(Country != "United Kingdom") |> select(-Invoice, -Country)
+cat("Training rows (UK 80%):            ", nrow(train_boost), "\n")
+cat("In-distribution test (UK 20%):     ", nrow(test_uk_boost), "\n")
+cat("Out-of-distribution test (non-UK): ", nrow(test_nouk_boost), "\n")
 
-# Step 4: Boosting — same gbm setup as hw4 Caravan (distribution="bernoulli")
+# ── STEP 4: Boosting ──────────────────────────────────────────────────────────
+# same gbm setup as hw4 Caravan (distribution = "bernoulli")
 boost_basket <- gbm(BoughtTarget ~ .,
-                    data         = train_boost,
-                    distribution = "bernoulli",
-                    n.trees      = 1000,
-                    shrinkage    = 0.01,
+                    data              = train_boost,
+                    distribution      = "bernoulli",
+                    n.trees           = 1000,
+                    shrinkage         = 0.01,
                     interaction.depth = 2)
 
-summary(boost_basket)  # variable importance plot — same as hw4
+summary(boost_basket)  # variable importance — same as hw4
 
-# predict (same threshold logic as hw4 Caravan > 0.2)
-boost_probs <- predict(boost_basket, test_boost, n.trees = 1000, type = "response")
-boost_pred  <- ifelse(boost_probs > 0.2, 1, 0)
-table(boost_pred, test_boost$BoughtTarget)          # confusion matrix
-mean(boost_pred != test_boost$BoughtTarget)         # test error rate
+# UK test (in-distribution)
+boost_probs_uk <- predict(boost_basket, test_uk_boost, n.trees = 1000, type = "response")
+boost_pred_uk  <- ifelse(boost_probs_uk > 0.2, 1, 0)
+cat("\n--- Boosting: UK Test (in-distribution) ---\n")
+print(table(Predicted = boost_pred_uk, Actual = test_uk_boost$BoughtTarget))
+cat("Test error rate:", mean(boost_pred_uk != test_uk_boost$BoughtTarget), "\n")
 
-# Step 5: Random Forest for comparison + importance (same as hw4 rf.carseats)
+# non-UK test (out-of-distribution)
+boost_probs_nouk <- predict(boost_basket, test_nouk_boost, n.trees = 1000, type = "response")
+boost_pred_nouk  <- ifelse(boost_probs_nouk > 0.2, 1, 0)
+cat("\n--- Boosting: non-UK Test (out-of-distribution) ---\n")
+print(table(Predicted = boost_pred_nouk, Actual = test_nouk_boost$BoughtTarget))
+cat("Test error rate:", mean(boost_pred_nouk != test_nouk_boost$BoughtTarget), "\n")
+
+# ── STEP 5: Random Forest ─────────────────────────────────────────────────────
+# same structure as hw4 rf.carseats
 set.seed(1)
 rf_basket <- randomForest(as.factor(BoughtTarget) ~ .,
                           data       = train_boost,
                           mtry       = 3,
                           importance = TRUE)
 
-rf_pred_basket <- predict(rf_basket, test_boost)
-table(rf_pred_basket, test_boost$BoughtTarget)
-mean(rf_pred_basket != test_boost$BoughtTarget)
+# UK test (in-distribution)
+rf_pred_uk <- predict(rf_basket, test_uk_boost)
+cat("\n--- Random Forest: UK Test (in-distribution) ---\n")
+print(table(Predicted = rf_pred_uk, Actual = test_uk_boost$BoughtTarget))
+cat("Test error rate:", mean(rf_pred_uk != test_uk_boost$BoughtTarget), "\n")
 
-varImpPlot(rf_basket, main = "Q6: What Predicts Co-Purchase?")
+# non-UK test (out-of-distribution)
+rf_pred_nouk <- predict(rf_basket, test_nouk_boost)
+cat("\n--- Random Forest: non-UK Test (out-of-distribution) ---\n")
+print(table(Predicted = rf_pred_nouk, Actual = test_nouk_boost$BoughtTarget))
+cat("Test error rate:", mean(rf_pred_nouk != test_nouk_boost$BoughtTarget), "\n")
+
+varImpPlot(rf_basket, main = "What Predicts Co-Purchase?")
