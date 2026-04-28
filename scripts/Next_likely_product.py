@@ -41,6 +41,7 @@ def get_recommendations(product_query, top_n=5):
     print(f"Appeared in {total_invoices} invoices\n")
     print(f"{'Rank':<5} {'Product':<50} {'Count':>6} {'% of baskets':>13}")
     print("-" * 78)
+    # % of baskets = "of all the times someone bought X, what fraction of those trips also included Y?"
 
     for i, (item, count) in enumerate(counts.most_common(top_n), 1):
         pct = count / total_invoices * 100
