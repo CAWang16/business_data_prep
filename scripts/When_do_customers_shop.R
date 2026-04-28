@@ -11,19 +11,16 @@ library(MASS)      # LDA
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail") |>
+df <- dbReadTable(con, "online_retail_clean") |>
   mutate(
     InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
     Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),          # numeric 1-12 (needed for models)
+    MonthNum    = month(InvoiceDate),
     MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1), # 1=Mon ... 7=Sun
+    DayOfWeek   = wday(InvoiceDate, week_start = 1),
     Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate),
-    IsCancelled = grepl("^C", as.character(Invoice))
-  ) |>
-  rename(Revenue = TotalPrice) |>
-  filter(!IsCancelled, Quantity > 0, Price > 0)
+    Quarter     = quarter(InvoiceDate)
+  )
 
 # call dbDisconnect(con) when finished working with a connection 
 
@@ -42,11 +39,12 @@ df_time <- df |>
   left_join(hour_revenue, by = "Hour") |>
   mutate(IsPeakHour = ifelse(AvgRevenue >= peak_threshold, 1, 0))
 
-# Step 2: train/test split (same 80/20 method as hw2)
-set.seed(1)
-index <- sample(1:nrow(df_time), 0.80 * nrow(df_time))
-train_t <- df_time[index, ]
-test_t  <- df_time[-index, ]
+# Step 2: train/test split — UK = train, non-UK = test (out-of-distribution)
+# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
+# held-out out-of-distribution test to assess how well patterns generalise
+# internationally (see demand_spike_report.docx for full justification).
+train_t <- df_time |> filter(Country == "United Kingdom")
+test_t  <- df_time |> filter(Country != "United Kingdom")
 
 # Step 3: Logistic Regression (same as hw2 glm with family = binomial)
 glm_time <- glm(IsPeakHour ~ Hour + DayOfWeek + MonthNum,

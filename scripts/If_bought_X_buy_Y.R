@@ -13,19 +13,16 @@ library(splines)   # bs()
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail") |>
+df <- dbReadTable(con, "online_retail_clean") |>
   mutate(
     InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
     Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),          # numeric 1-12 (needed for models)
+    MonthNum    = month(InvoiceDate),
     MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1), # 1=Mon ... 7=Sun
+    DayOfWeek   = wday(InvoiceDate, week_start = 1),
     Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate),
-    IsCancelled = grepl("^C", as.character(Invoice))
-  ) |>
-  rename(Revenue = TotalPrice) |>
-  filter(!IsCancelled, Quantity > 0, Price > 0)
+    Quarter     = quarter(InvoiceDate)
+  )
 
 # call dbDisconnect(con) when finished working with a connection 
 
@@ -71,11 +68,19 @@ model_df <- invoice_features |>
   select(-Invoice) |>
   na.omit()
 
-# Step 3: train/test split
-set.seed(1)
-train_idx <- sample(1:nrow(model_df), 0.8 * nrow(model_df))
-train_boost <- model_df[train_idx, ]
-test_boost  <- model_df[-train_idx, ]
+# Step 3: train/test split — UK = train, non-UK = test (out-of-distribution)
+# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
+# held-out out-of-distribution test to assess how well patterns generalise
+# internationally (see demand_spike_report.docx for full justification).
+# Join country back onto model_df before splitting
+model_df_country <- invoice_features |>
+  left_join(target_invoices, by = "Invoice") |>
+  mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
+  left_join(df |> distinct(Invoice, Country), by = "Invoice") |>
+  na.omit()
+
+train_boost <- model_df_country |> filter(Country == "United Kingdom") |> select(-Invoice, -Country)
+test_boost  <- model_df_country |> filter(Country != "United Kingdom") |> select(-Invoice, -Country)
 
 # Step 4: Boosting — same gbm setup as hw4 Caravan (distribution="bernoulli")
 boost_basket <- gbm(BoughtTarget ~ .,

@@ -14,19 +14,16 @@ library(splines)   # bs()
 db_path <- "database/retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail") |>
+df <- dbReadTable(con, "online_retail_clean") |>
   mutate(
     InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
     Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),          # numeric 1-12 (needed for models)
+    MonthNum    = month(InvoiceDate),
     MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1), # 1=Mon ... 7=Sun
+    DayOfWeek   = wday(InvoiceDate, week_start = 1),
     Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate),
-    IsCancelled = grepl("^C", as.character(Invoice))
-  ) |>
-  rename(Revenue = TotalPrice) |>
-  filter(!IsCancelled, Quantity > 0, Price > 0)
+    Quarter     = quarter(InvoiceDate)
+  )
 
 # call dbDisconnect(con) when finished working with a connection 
 
@@ -69,20 +66,34 @@ best_df_season <- which.min(cv_errors_season)
 cat("Best spline df for seasonality:", best_df_season, "\n")
 
 # Step 4: Random Forest — which product features predict bulk buying?
-# (same structure as hw4 randomForest on Carseats/Boston)
-set.seed(1)
-train_pm <- sample(1:nrow(product_month), 0.8 * nrow(product_month))
+# Train/test split — UK = train, non-UK = test (out-of-distribution)
+# Rationale: UK is the dominant market (~85% of volume); non-UK serves as a
+# held-out out-of-distribution test to assess how well patterns generalise
+# internationally (see demand_spike_report.docx for full justification).
+product_month_country <- df |>
+  group_by(StockCode, Description, MonthNum, Country) |>
+  summarise(
+    TotalQty    = sum(Quantity),
+    AvgPrice    = mean(Price),
+    NumInvoices = n_distinct(Invoice),
+    .groups     = "drop"
+  ) |>
+  filter(TotalQty > 0) |>
+  na.omit()
 
+pm_train <- product_month_country |> filter(Country == "United Kingdom") |> select(-StockCode, -Description, -Country)
+pm_test  <- product_month_country |> filter(Country != "United Kingdom") |> select(-StockCode, -Description, -Country)
+
+set.seed(1)
 rf_bulk <- randomForest(TotalQty ~ MonthNum + AvgPrice + NumInvoices,
-                        data    = product_month,
-                        subset  = train_pm,
-                        mtry    = 2,
+                        data       = pm_train,
+                        mtry       = 2,
                         importance = TRUE)
 
 importance(rf_bulk)
 varImpPlot(rf_bulk, main = "Q5: Variable Importance for Bulk Quantity")
 
-rf_pred <- predict(rf_bulk, product_month[-train_pm, ])
-cat("Random Forest test MSE:", 
-    mean((rf_pred - product_month$TotalQty[-train_pm])^2), "\n")
+rf_pred <- predict(rf_bulk, pm_test)
+cat("Random Forest test MSE (non-UK):",
+    mean((rf_pred - pm_test$TotalQty)^2), "\n")
 
