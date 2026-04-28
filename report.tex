@@ -1,0 +1,527 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{microtype}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+    citecolor=blue
+}
+
+\captionsetup{font=small, labelfont=bf}
+
+\title{\textbf{Online Retail II}\\[0.5em]
+       \large Data Processing \& Analysis Report}
+\author{Carl \& Anders\\[0.3em]
+        \small CSP 571 --- Spring 2026}
+\date{April 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+
+\section{Abstract}
+
+This report documents the full data processing and exploratory analysis pipeline applied to the UCI Online Retail II dataset, covering transactions from a UK-based non-store online retailer between December 2009 and December 2011. The dataset comprises 1,067,371 raw transaction records spanning eight fields. Our work proceeds in three phases: (1)~metadata validation of raw source fields to identify structural anomalies and format inconsistencies; (2)~split-decision exploratory data analysis to classify records into semantically distinct transaction types; and (3)~computation of summary statistics, data visualisations, and feature extraction in preparation for downstream modelling. Key findings include that approximately 22.8% of records lack a CustomerID, that InvoiceNo and StockCode encode multiple transaction types (sales, cancellations, accounting adjustments, free promotions), and that a structured seven-category split is required before any customer-level or product-level analysis can be conducted reliably.
+
+\newpage
+
+\section{Overview}
+
+\subsection{Problem Statement}
+
+E-commerce retailers accumulate vast volumes of transactional data whose raw form is rarely suitable for direct analysis. The Online Retail II dataset presents several challenges representative of real-world retail data: mixed transaction semantics encoded within shared fields (sales, returns, administrative adjustments, and free promotions all reside in the same table); pervasive missing values in the CustomerID field; non-standard StockCode identifiers for service and operational entries; and naming inconsistencies in geographic fields.
+
+The primary objective of this project is to design and implement a reproducible data processing pipeline that: (a)~validates the structural integrity of raw source fields; (b)~identifies and separates semantically distinct record types; (c)~applies principled cleaning and transformation rules with explicit assumptions; and (d)~extracts analytic features that support downstream customer segmentation and purchase-pattern modelling.
+
+\subsection{Related Work / Literature Review}
+
+Retail transaction datasets have been extensively studied in the data mining literature. RFM (Recency, Frequency, Monetary) analysis, introduced by Bult and Wansbeek (1995) and popularised by Hughes (1994), remains one of the most widely applied frameworks for customer value segmentation and is directly applicable to invoice-level data such as the Online Retail II dataset.
+
+Chen et al.\ (2012) used an earlier version of this dataset (Online Retail I) to demonstrate data mining techniques for customer segmentation using K-Means clustering on RFM features, establishing a widely cited baseline for this source. Daqing Chen's original UCI submission noted that the dataset contains a mix of wholesale and retail customers, which has implications for any per-unit price analysis.
+
+More recent work has extended transaction-level analysis to sequence modelling and collaborative filtering. Hidasi et al.\ (2016) demonstrated session-based recurrent neural networks for next-item recommendation, while Devooght and Bersini (2017) compared collaborative filtering approaches on transactional purchase histories. These downstream applications all share the upstream requirement of clean, well-typed transaction records, motivating the careful data processing approach documented in this report.
+
+Data cleaning practices for retail datasets are discussed by Rahm and Do (2000), who classify data quality problems into single-source and multi-source issues. The challenges encountered in this project --- missing identifiers, mixed semantics within a single column, and implicit coding conventions (C-prefixed cancellation invoices, A-prefixed accounting entries) --- are consistent with their taxonomy of schema-level and instance-level anomalies.
+
+\subsection{Proposed Methodology}
+
+Our methodology follows a sequential, script-driven pipeline with one Python script per logical stage, each operating on the shared SQLite database. This design keeps each stage independently reproducible and auditable.
+
+\begin{itemize}[leftmargin=1.5em]
+
+  \item \textbf{Stage 0 --- Data Ingestion} (\texttt{setup\_db.py}): Load both Excel sheets from the raw source file into a single SQLite table.
+
+  \item \textbf{Stage 1 --- Metadata Validation} (\texttt{00\_validate\_source\_metadata.py}): Validate each raw field for format conformance, value ranges, and missingness.
+
+  \item \textbf{Stage 2 --- Split-Decision EDA} (\texttt{01\_split\_decision\_eda.py}): Classify records into transaction types using cross-tabulation and overlap analysis.
+
+  \item \textbf{Stage 3 --- Cleaning \& Transformation}: Apply the split decisions to produce a filtered, typed, and enriched table ready for analysis.
+
+  \item \textbf{Stage 4 --- Analysis}: Compute summary statistics, generate visualisations, and extract modelling features.
+
+\end{itemize}
+
+\newpage
+
+\section{Data Processing}
+
+\subsection{Data Description}
+
+The Online Retail II dataset (UCI Machine Learning Repository, donated by Daqing Chen, London South Bank University) covers transactions of a UK-based online retailer that primarily sells unique all-occasion gift-ware to wholesale customers. The data spans two consecutive fiscal years delivered as two Excel sheets.
+
+\begin{longtable}{p{0.25\textwidth} p{0.65\textwidth}}
+\caption{Dataset overview} \label{tab:dataset_overview} \\
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Property} & \textbf{Value} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Source & UCI Machine Learning Repository --- Online Retail II \\
+Format & Microsoft Excel (.xlsx) \\
+Sheets & Year 2009--2010 (525,461 rows),  Year 2010--2011 (541,910 rows) \\
+Date range & 01 Dec 2009 -- 09 Dec 2011 \\
+Total rows (combined) & 1,067,371 \\
+Columns & 8 \\
+\end{longtable}
+
+Note on source column names: the raw Excel file uses \texttt{Invoice}, \texttt{Customer ID}, and \texttt{Price} for what the official specification calls \texttt{InvoiceNo}, \texttt{CustomerID}, and \texttt{UnitPrice} respectively. This report uses the official names throughout. Fields are nominal (categorical) unless noted: \texttt{Quantity}, \texttt{InvoiceDate}, and \texttt{UnitPrice} are numeric.
+
+\begin{longtable}{p{0.14\textwidth} p{0.42\textwidth} p{0.36\textwidth}}
+\caption{Official column definitions and observed deviations} \label{tab:col_defs} \\
+\toprule
+\textbf{Field} & \textbf{Official Definition} & \textbf{Observed Deviations} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Field} & \textbf{Official Definition} & \textbf{Observed Deviations} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+InvoiceNo & 6-digit integral number uniquely assigned to each transaction. 'C' prefix = cancellation. & 6 rows carry 'A' prefix (accounting adjustments) --- undocumented in spec \\
+StockCode & 5-digit integral number uniquely assigned to each distinct product. & Suffix variants (e.g. 85123A) and fully non-standard codes exist --- spec says 5-digit integral only \\
+Description & Product (item) name. & approx. 2\% of rows missing \\
+Quantity & Quantities of each product per transaction. Numeric. & Negative values present (returns / adjustments) \\
+InvoiceDate & Day and time when the transaction was generated. Numeric. & No deviations --- all values parse successfully \\
+UnitPrice & Product price per unit in sterling (\pounds{}). Numeric. & Zero and negative values present; stored as 'Price' in source file \\
+CustomerID & 5-digit integral number uniquely assigned to each customer. & approx. 25\% of rows missing \\
+Country & Name of the country where the customer resides. & 'Unspecified' entries present; naming inconsistencies (e.g. EIRE vs Ireland) \\
+\end{longtable}
+
+\subsection{Data Cleaning}
+
+Cleaning decisions were derived from the metadata validation output of \texttt{00\_validate\_source\_metadata.py}.
+
+\subsubsection{InvoiceNo}
+
+The official specification defines InvoiceNo as a 6-digit integral number, with a \texttt{C} prefix indicating a cancellation. No other prefixes are documented.
+
+Of 1,067,371 rows, 1,067,365 conform to the spec. The remaining 6 rows carry an \texttt{A} prefix and represent bad-debt accounting adjustment entries --- an undocumented transaction type not described in the official field definition. These rows are excluded from all downstream analysis.
+
+\begin{longtable}{p{0.48\textwidth} p{0.11\textwidth} p{0.30\textwidth}}
+\caption{InvoiceNo validation against official spec} \label{tab:invoiceno} \\
+\toprule
+\textbf{Category} & \textbf{Count} & \textbf{Action} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Category} & \textbf{Count} & \textbf{Action} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Standard sale (\#\#\#\#\#\#) --- spec-compliant & 1,047,871 & Retain --- classify as sale \\
+Cancellation (C\#\#\#\#\#\#) --- spec-compliant & 19,494 & Retain --- classify as return \\
+Accounting adjustment (A\#\#\#\#\#\#) --- undocumented deviation & 6 & Exclude \\
+Total & 1,067,371 & --- \\
+\end{longtable}
+
+\subsubsection{CustomerID}
+
+CustomerID is missing for 243,007 rows (22.8% of the dataset). All 824,364 non-missing values conform to the 5-digit format; no format violations were found. Missing CustomerIDs are retained in non-customer analyses but excluded from customer-level modelling.
+
+\subsubsection{Quantity \& UnitPrice}
+
+\begin{longtable}{p{0.22\textwidth} p{0.15\textwidth} p{0.53\textwidth}}
+\caption{Quantity value breakdown} \label{tab:quantity} \\
+\toprule
+\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Quantity > 0 & 1,044,421 & Standard sale or free promotional item \\
+Quantity = 0 & 0 & Data anomaly --- reviewed case by case \\
+Quantity < 0 & 22,950 & Return / cancellation or internal adjustment \\
+\end{longtable}
+
+\begin{longtable}{p{0.22\textwidth} p{0.15\textwidth} p{0.53\textwidth}}
+\caption{UnitPrice value breakdown} \label{tab:price} \\
+\toprule
+\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+UnitPrice > 0 & 1,061,164 & Revenue-generating transaction \\
+UnitPrice = 0 & 6,202 & Free item or non-revenue system entry \\
+UnitPrice < 0 & 5 & Bad-debt accounting adjustment --- exclude \\
+\end{longtable}
+
+\subsubsection{InvoiceDate}
+
+All 1,067,371 InvoiceDate values parsed successfully with no unparseable dates. The dataset spans 01 December 2009 to 09 December 2011.
+
+\subsubsection{StockCode}
+
+The official specification defines StockCode as a 5-digit integral number. Validation reveals two classes of deviation:
+
+\begin{longtable}{p{0.32\textwidth} p{0.10\textwidth} p{0.12\textwidth} p{0.32\textwidth}}
+\caption{StockCode validation against official spec} \label{tab:stockcode} \\
+\toprule
+\textbf{Pattern} & \textbf{Rows} & \textbf{Unique codes} & \textbf{Treatment} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Pattern} & \textbf{Rows} & \textbf{Unique codes} & \textbf{Treatment} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+5-digit numeric (e.g. 85123) --- spec-compliant & 932,385 & 3,590 & Standard product SKU --- include \\
+5-digit + letter suffix (e.g. 85123A) --- deviation from spec & 128,893 & 1,652 & Product variant --- include (spec caveat noted) \\
+Fully non-standard (e.g. POST, DOT, M, DCGS, gift) --- deviation from spec & 6,093 & 62 & Service / admin entry --- separate or exclude \\
+\end{longtable}
+
+Non-standard special codes include \texttt{POST} (postage), \texttt{DOT} (dotcom), \texttt{M} (manual), \texttt{BANK CHARGES}, \texttt{ADJUST}, \texttt{AMAZONFEE}, and the \texttt{DCGS} and \texttt{gift} code families.
+
+\subsubsection{Country}
+
+Country has no missing or blank values across all 1,067,371 rows. There are 43 unique country labels. 756 rows (0.07%) carry the value \texttt{Unspecified}. Naming inconsistencies (e.g.\ \texttt{EIRE} instead of \texttt{Ireland}) are standardised in the transformation stage.
+
+\begin{longtable}{p{0.45\textwidth} p{0.35\textwidth}}
+\caption{Top 10 countries by row count} \label{tab:countries} \\
+\toprule
+\textbf{Country} & \textbf{Row Count} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Country} & \textbf{Row Count} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+United Kingdom & 981,330 \\
+EIRE & 17,866 \\
+Germany & 17,624 \\
+France & 14,330 \\
+Netherlands & 5,140 \\
+Spain & 3,811 \\
+Switzerland & 3,189 \\
+Belgium & 3,123 \\
+Portugal & 2,620 \\
+Australia & 1,913 \\
+\end{longtable}
+
+\subsubsection{Description}
+
+Description is missing for 4,382 rows (0.41%). Missing values are filled from the most common description associated with each StockCode in the downstream transformation stage.
+
+\subsection{Data Transformation \& Assumptions}
+
+Following the split-decision EDA (\texttt{01\_split\_decision\_eda.py}), records are assigned to one of seven mutually exclusive categories.
+
+\begin{longtable}{p{0.22\textwidth} p{0.26\textwidth} p{0.09\textwidth} p{0.30\textwidth}}
+\caption{Transaction type split decisions} \label{tab:split} \\
+\toprule
+\textbf{Category} & \textbf{Rule} & \textbf{Count} & \textbf{Disposition} \\
+\midrule
+\endfirsthead
+\multicolumn{4}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Category} & \textbf{Rule} & \textbf{Count} & \textbf{Disposition} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Admin / accounting adjustments & InvoiceNo starts with 'A' & 6 & Exclude from all analyses \\
+Cancellation invoices & InvoiceNo starts with 'C' & 19,494 & Separate returns analysis \\
+Internal inventory adjustments & Qty < 0, UnitPrice = 0, not C/A & 3,457 & Exclude from sales analyses \\
+Free items / promotions & Qty > 0, UnitPrice = 0, not C/A & 2,745 & Separate promotions analysis \\
+Gift vouchers & StockCode contains 'gift' & 101 & Separate voucher analysis \\
+DCGS codes & StockCode contains 'DCGS' & 158 & Separate channel analysis \\
+Clean sales & Qty > 0, UnitPrice > 0, not C/A, not gift/DCGS & 1,041,669 & Primary analysis dataset \\
+\end{longtable}
+
+\noindent\textbf{Key assumptions:}
+
+\begin{itemize}[leftmargin=1.5em]
+
+  \item A \texttt{C}-prefixed invoice always represents a cancellation regardless of Quantity sign. One exception (1 row with positive Quantity on a C-invoice) has been identified and excluded from both datasets.
+
+  \item Rows with negative Quantity but no C-prefix (3,457 rows) are primarily administrative adjustments and are excluded from sales analysis.
+
+  \item Zero-UnitPrice rows with positive Quantity are treated as promotional/free items and are not counted as revenue-generating sales.
+
+  \item DCGS and gift StockCode families are treated as separate channels because their price and description patterns differ systematically from standard product SKUs.
+
+  \item Missing CustomerID is retained in product-level and geographic analyses but excluded from customer-level segmentation analyses.
+
+\end{itemize}
+
+\newpage
+
+\section{Data Analysis}
+
+\subsection{Summary Statistics}
+
+Summary statistics are computed on the clean-sales subset (Quantity $>$ 0, UnitPrice $>$ 0, not C/A-invoice, not gift/DCGS) unless otherwise noted.
+
+\begin{longtable}{p{0.55\textwidth} p{0.35\textwidth}}
+\caption{Clean-sales summary statistics} \label{tab:summary} \\
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Clean sale rows & 1,041,669 \\
+Unique invoices & 40,076 \\
+Unique customers (with CustomerID) & 5,878 \\
+Unique products (StockCode) & 4,915 \\
+Total revenue (\pounds{}) & \pounds{}20,961,532.51 \\
+Avg revenue per invoice (\pounds{}) & \pounds{}523.04 \\
+Avg UnitPrice (\pounds{}) & \pounds{}4.07 \\
+Avg quantity per line & 11.0 \\
+Date range & 01 Dec 2009 -- 09 Dec 2011 \\
+\end{longtable}
+
+\begin{longtable}{p{0.12\textwidth} p{0.55\textwidth} p{0.18\textwidth}}
+\caption{Top 10 products by total quantity sold} \label{tab:top_products} \\
+\toprule
+\textbf{StockCode} & \textbf{Description} & \textbf{Total Qty Sold} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{StockCode} & \textbf{Description} & \textbf{Total Qty Sold} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+84077 & WORLD WAR 2 GLIDERS ASSTD DESIGNS & 110,138 \\
+85099B & JUMBO BAG RED RETROSPOT & 98,349 \\
+21212 & PACK OF 72 RETROSPOT CAKE CASES & 96,560 \\
+85123A & WHITE HANGING HEART T-LIGHT HOLDER & 96,147 \\
+22197 & SMALL POPCORN HOLDER & 89,898 \\
+84879 & ASSORTED COLOUR BIRD ORNAMENT & 81,809 \\
+23843 & PAPER CRAFT , LITTLE BIRDIE & 80,995 \\
+23166 & MEDIUM CERAMIC TOP STORAGE JAR & 78,033 \\
+17003 & BROCADE RING PURSE  & 71,430 \\
+21977 & PACK OF 60 PINK PAISLEY CAKE CASES & 56,794 \\
+\end{longtable}
+
+Returns (C-invoice rows) account for 19,494 records (1.83% of the raw dataset), confirming that cancellations are a material component of the data.
+
+\begin{longtable}{p{0.50\textwidth} p{0.35\textwidth}}
+\caption{Top countries by missing CustomerID rate} \label{tab:missing_cid} \\
+\toprule
+\textbf{Country} & \textbf{Missing CustomerID Rate} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Country} & \textbf{Missing CustomerID Rate} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Hong Kong & 100.0\% \\
+Bermuda & 100.0\% \\
+Bahrain & 53.2\% \\
+Unspecified & 30.7\% \\
+RSA & 27.2\% \\
+United Kingdom & 24.5\% \\
+United Arab Emirates & 22.8\% \\
+Lebanon & 22.4\% \\
+\end{longtable}
+
+\subsection{Data Visualization}
+
+Three visualisations were produced to support exploratory understanding of the dataset's revenue distribution, temporal patterns, and geographic composition.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/totalprice_distribution.png}
+  \caption{Distribution of total line-item price (Quantity $\times$ UnitPrice) for clean sales. The distribution is heavily right-skewed, indicating that most transactions are small while a small number of bulk orders generate disproportionately high revenue.}
+  \label{fig:price_dist}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/seasonality_timing.png}
+  \caption{Seasonality and intra-day timing patterns. Monthly aggregation reveals a pronounced sales peak in Q4 (October--November), consistent with pre-Christmas gift-ware demand. Hour-of-day patterns show peak activity during UK business hours (10:00--14:00).}
+  \label{fig:seasonality}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/geographic_insights.png}
+  \caption{Geographic revenue distribution. The United Kingdom accounts for the substantial majority of transactions. European markets (Netherlands, Germany, France, EIRE) are the most significant international segments.}
+  \label{fig:geography}
+\end{figure}
+
+\subsection{Feature Extraction}
+
+Feature extraction targets two downstream modelling objectives: (a)~customer-level segmentation via RFM analysis, and (b)~product-level demand characterisation. Features are derived exclusively from the clean-sales subset.
+
+\subsubsection{RFM Features (customer level)}
+
+\begin{longtable}{p{0.13\textwidth} p{0.46\textwidth} p{0.32\textwidth}}
+\caption{RFM feature definitions} \label{tab:rfm} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} & \textbf{Notes} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+Recency & Days since the customer's most recent purchase (relative to dataset end date) & Computed per CustomerID; rows with missing CustomerID excluded \\
+Frequency & Total number of distinct invoices associated with the customer & Invoice-level count; each InvoiceNo counted once per customer \\
+Monetary & Total revenue (sum of Quantity $\times$ UnitPrice) attributed to the customer & Gross sales only; returns not netted at this stage \\
+\end{longtable}
+
+\subsubsection{Transaction-level Features}
+
+\begin{longtable}{p{0.20\textwidth} p{0.70\textwidth}}
+\caption{Transaction-level derived features} \label{tab:txn_features} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+TotalPrice & Quantity $\times$ UnitPrice per line item \\
+Month & Calendar month of InvoiceDate (1--12) \\
+DayOfWeek & Day of week of InvoiceDate (0 = Monday, 6 = Sunday) \\
+Hour & Hour of InvoiceDate (0--23) \\
+IsUK & Binary indicator: Country = United Kingdom \\
+HasCustomerID & Binary indicator: CustomerID is not missing \\
+\end{longtable}
+
+\subsubsection{Product-level Features}
+
+\begin{longtable}{p{0.25\textwidth} p{0.65\textwidth}}
+\caption{Product-level aggregate features} \label{tab:prod_features} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} \\
+\midrule
+\endfirsthead
+\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
+\toprule
+\textbf{Feature} & \textbf{Definition} \\
+\midrule
+\endhead
+\midrule
+\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
+\endfoot
+\bottomrule
+\endlastfoot
+TotalQuantitySold & Sum of Quantity across all clean-sale line items for the product \\
+UniqueCustomers & Count of distinct CustomerIDs that purchased the product \\
+UniqueInvoices & Count of distinct InvoiceNos containing the product \\
+AvgUnitPrice & Mean UnitPrice across all clean-sale line items for the product \\
+RevenueContribution & Product's share of total clean-sales revenue (\%) \\
+\end{longtable}
+
+\end{document}

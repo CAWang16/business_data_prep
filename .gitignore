@@ -1,3 +1,7 @@
+**/.DS_Store
+venv/
+~$*
+
 # Data files - teammates run setup_db.py to generate these locally
 *.xlsx
 *.csv
