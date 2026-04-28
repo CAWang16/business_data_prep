@@ -1,5 +1,11 @@
 # If bought X, buy Y -> Boosting (gbm), Random Forest, Association Rules
 
+# Builds a binary co-purchase model for the most frequently bought product, 
+# predicting whether a given invoice contains that item using basket-level features 
+# like number of items, average price, total quantity, and time variables. 
+# A GBM (boosting) and a Random Forest are both trained on UK invoices and tested on non-UK invoices, 
+# with variable importance plots identifying which basket features most strongly predict co-purchase behavior.
+
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)

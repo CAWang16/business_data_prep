@@ -1,5 +1,11 @@
 # "Most valuable suppliers" -> Linear regression, Lasso/Ridge for feature selection
 
+# Treats each product (StockCode) as a "supplier proxy" and builds an RFM profile — 
+# recency, frequency, monetary value, average price, and total quantity — at the product-by-country level. 
+# Lasso and Ridge regression are trained on UK products to predict total revenue, with the non-UK product set used as the held-out test. 
+# A bar chart of the top 20 highest-revenue products is also generated alongside the Lasso coefficient output.
+
+
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)

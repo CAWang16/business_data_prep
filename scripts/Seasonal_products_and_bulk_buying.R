@@ -1,5 +1,10 @@
 # "Seasonal products and bulk buying" -> Regressions splines/GAM, Random Forest importance
 
+# Models how product quantity sold changes across months and with price, using 
+# a GAM with smoothing splines and a regression spline with cross-validated degrees of freedom. 
+# A Random Forest is then trained on UK product-month data to identify which features — month, price, 
+# or order frequency — are most important for predicting bulk purchases. 
+# The non-UK product-month data serves as the out-of-distribution test set for the Random Forest.
 
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 library(RSQLite)

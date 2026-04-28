@@ -1,4 +1,10 @@
-# "When do customers shop?" -> Logistic regression (predict peak hout/day), LDA
+# "When do customers shop?" -> Logistic regression (predict peak hour/day), LDA
+
+# Investigates when customers are most likely to shop by defining a binary "peak hour" 
+# target — the top third of hours by average revenue — and modeling it using hour of day, day of week, and month. 
+# Two classifiers are compared: logistic regression and LDA, both trained on UK transactions only. 
+# The model is then tested against non-UK data to see if peak-hour patterns hold internationally. 
+# A heatmap of average revenue by hour and day is produced as the main visualization.
 
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 library(RSQLite)
