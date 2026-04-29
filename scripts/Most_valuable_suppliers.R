@@ -1,6 +1,6 @@
 # "Most valuable suppliers" -> Linear regression, Lasso/Ridge for feature selection
 
-# Treats each product (StockCode) as a "supplier proxy" and builds an RFM profile — 
+# Treats each product (stock_code) as a "supplier proxy" and builds an RFM profile — 
 # recency, frequency, monetary value, average price, and total quantity — at the product-by-country level. 
 # Lasso and Ridge regression are trained on UK products to predict total revenue, with the non-UK product set used as the held-out test. 
 # A bar chart of the top 20 highest-revenue products is also generated alongside the Lasso coefficient output.
@@ -19,18 +19,17 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
 # ── STEP 0: establishing db connection ────────────────────────────────────────
-db_path <- "database/retail.db"
+db_path <- "database/clean_retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail_clean") |>
+df <- dbReadTable(con, "clean_product_sales") |>
   mutate(
-    InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-    Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),
-    MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1),
-    Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate)
+    invoice_date = as.POSIXct(invoice_date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    Revenue      = quantity * price,
+    MonthNum     = month(invoice_date),
+    DayOfWeek    = wday(invoice_date, week_start = 1),
+    Hour         = hour(invoice_date),
+    Quarter      = quarter(invoice_date)
   )
 
 dbDisconnect(con) # finished working with a connection 
@@ -45,24 +44,24 @@ dbDisconnect(con) # finished working with a connection
 # to assess international generalisability.
 
 # ── STEP 1: build product-level RFM by country ────────────────────────────────
-snapshot <- max(df$InvoiceDate)
+snapshot <- max(df$invoice_date)
 
 rfm_by_country <- df |>
-  group_by(StockCode, Description, Country) |>
+  group_by(stock_code, description, country) |>
   summarise(
-    Recency   = as.numeric(difftime(snapshot, max(InvoiceDate), units = "days")),
-    Frequency = n_distinct(InvoiceNo),
+    Recency   = as.numeric(difftime(snapshot, max(invoice_date), units = "days")),
+    Frequency = n_distinct(invoice_no),
     Monetary  = sum(Revenue),
-    AvgPrice  = mean(Price),
-    TotalQty  = sum(Quantity),
+    Avgprice  = mean(price),
+    TotalQty  = sum(quantity),
     .groups   = "drop"
   ) |>
   filter(Frequency >= 5) |>
   na.omit()
 
 # ── STEP 2: UK/non-UK split, then 80/20 within UK ─────────────────────────────
-uk_rfm   <- rfm_by_country |> filter(Country == "United Kingdom") |> dplyr::select(-StockCode, -Description, -Country)
-nouk_rfm <- rfm_by_country |> filter(Country != "United Kingdom") |> dplyr::select(-StockCode, -Description, -Country)
+uk_rfm   <- rfm_by_country |> filter(country == "United Kingdom") |> dplyr::select(-stock_code, -description, -country)
+nouk_rfm <- rfm_by_country |> filter(country != "United Kingdom") |> dplyr::select(-stock_code, -description, -country)
 
 set.seed(1)
 train_idx <- sample(1:nrow(uk_rfm), 0.8 * nrow(uk_rfm))
@@ -75,7 +74,7 @@ cat("In-distribution test (UK 20%):     ", nrow(rfm_uk_test), "\n")
 cat("Out-of-distribution test (non-UK): ", nrow(rfm_nouk_test), "\n")
 
 # ── STEP 3: build model matrices ──────────────────────────────────────────────
-formula_rfm <- Monetary ~ Recency + Frequency + AvgPrice + TotalQty
+formula_rfm <- Monetary ~ Recency + Frequency + Avgprice + TotalQty
 
 x_train    <- model.matrix(formula_rfm, data = rfm_train)[, -1]
 y_train    <- rfm_train$Monetary
@@ -135,9 +134,9 @@ cat("Ridge non-UK relative error:",
 
 # ── STEP 6: Visualize top 20 products by total revenue (UK) ───────────────────
 rfm_by_country |>
-  filter(Country == "United Kingdom") |>
+  filter(country == "United Kingdom") |>
   slice_max(Monetary, n = 20) |>
-  ggplot(aes(x = reorder(str_trunc(Description, 30), Monetary), y = Monetary)) +
+  ggplot(aes(x = reorder(str_trunc(description, 30), Monetary), y = Monetary)) +
   geom_col(fill = "steelblue") +
   coord_flip() +
   scale_y_continuous(labels = scales::comma) +

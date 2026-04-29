@@ -19,18 +19,17 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
 # establishing db connection
-db_path <- "database/retail.db"
+db_path <- "database/clean_retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail_clean") |>
+df <- dbReadTable(con, "clean_product_sales") |>
   mutate(
-    InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-    Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),
-    MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1),
-    Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate)
+    invoice_date = as.POSIXct(invoice_date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    Revenue      = quantity * price,
+    MonthNum     = month(invoice_date),
+    DayOfWeek    = wday(invoice_date, week_start = 1),
+    Hour         = hour(invoice_date),
+    Quarter      = quarter(invoice_date)
   )
 
 dbDisconnect(con) # finished working with a connection 
@@ -45,8 +44,8 @@ dbDisconnect(con) # finished working with a connection
 # to assess international generalisability.
 
 # ── STEP 1: UK/non-UK split ────────────────────────────────────────────────────
-uk_data   <- df |> filter(Country == "United Kingdom")
-nouk_data <- df |> filter(Country != "United Kingdom")
+uk_data   <- df |> filter(country == "United Kingdom")
+nouk_data <- df |> filter(country != "United Kingdom")
 
 # ── STEP 2: define peak hours from training data only ─────────────────────────
 set.seed(1)
@@ -74,11 +73,11 @@ nouk_test <- label_peak(nouk_data)
 
 # Aggregate to invoice level before modeling (one row per transaction)
 uk_train_inv <- uk_train |>
-  group_by(InvoiceNo) |>
+  group_by(invoice_no) |>
   summarise(
     IsPeakHour = first(IsPeakHour),
     TotalRevenue = sum(Revenue),
-    TotalQty = sum(Quantity),
+    TotalQty = sum(quantity),
     NumItems = n(),
     DayOfWeek = first(DayOfWeek),
     MonthNum = first(MonthNum),
@@ -86,11 +85,11 @@ uk_train_inv <- uk_train |>
   )
 
 uk_test_inv <- uk_test |>
-  group_by(InvoiceNo) |>
+  group_by(invoice_no) |>
   summarise(
     IsPeakHour = first(IsPeakHour),
     TotalRevenue = sum(Revenue),
-    TotalQty = sum(Quantity),
+    TotalQty = sum(quantity),
     NumItems = n(),
     DayOfWeek = first(DayOfWeek),
     MonthNum = first(MonthNum),
@@ -98,11 +97,11 @@ uk_test_inv <- uk_test |>
   )
 
 nouk_test_inv <- nouk_test |>
-  group_by(InvoiceNo) |>
+  group_by(invoice_no) |>
   summarise(
     IsPeakHour = first(IsPeakHour),
     TotalRevenue = sum(Revenue),
-    TotalQty = sum(Quantity),
+    TotalQty = sum(quantity),
     NumItems = n(),
     DayOfWeek = first(DayOfWeek),
     MonthNum = first(MonthNum),
@@ -152,7 +151,7 @@ df |>
   geom_tile() +
   scale_fill_viridis_c() +
   scale_y_discrete(labels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) +
-  labs(title = "Q3: Average Revenue by Hour and Day of Week",
+  labs(title = "Average Revenue by Hour and Day of Week",
        x = "Hour of Day", y = NULL, fill = "Avg Revenue (GBP)") +
   theme_minimal()
 

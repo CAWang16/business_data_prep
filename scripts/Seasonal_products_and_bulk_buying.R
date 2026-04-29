@@ -22,18 +22,17 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
 # ── STEP 0: establishing db connection ────────────────────────────────────────
-db_path <- "database/retail.db"
+db_path <- "database/clean_retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail_clean") |>
+df <- dbReadTable(con, "clean_product_sales") |>
   mutate(
-    InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-    Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),
-    MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1),
-    Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate)
+    invoice_date = as.POSIXct(invoice_date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    Revenue      = quantity * price,
+    MonthNum     = month(invoice_date),
+    DayOfWeek    = wday(invoice_date, week_start = 1),
+    Hour         = hour(invoice_date),
+    Quarter      = quarter(invoice_date)
   )
 
 dbDisconnect(con) # finished working with a connection 
@@ -50,19 +49,19 @@ dbDisconnect(con) # finished working with a connection
 
 # ── STEP 1: aggregate to product-month level by country ───────────────────────
 product_month <- df |>
-  group_by(StockCode, Description, MonthNum, Country) |>
+  group_by(stock_code, description, MonthNum, country) |>
   summarise(
-    TotalQty    = sum(Quantity),
-    AvgPrice    = mean(Price),
-    NumInvoices = n_distinct(InvoiceNo),
+    TotalQty    = sum(quantity),
+    Avgprice    = mean(price),
+    NumInvoices = n_distinct(invoice_no),
     .groups     = "drop"
   ) |>
   filter(TotalQty > 0) |>
   na.omit()
 
 # ── STEP 2: UK/non-UK split, then 80/20 within UK ─────────────────────────────
-uk_pm   <- product_month |> filter(Country == "United Kingdom")
-nouk_pm <- product_month |> filter(Country != "United Kingdom")
+uk_pm   <- product_month |> filter(country == "United Kingdom")
+nouk_pm <- product_month |> filter(country != "United Kingdom")
 
 set.seed(1)
 train_idx  <- sample(1:nrow(uk_pm), 0.8 * nrow(uk_pm))
@@ -76,7 +75,7 @@ cat("Out-of-distribution test (non-UK): ", nrow(pm_nouk_test), "\n")
 
 # ── STEP 3: GAM on training data ──────────────────────────────────────────────
 # s() applies smoothing spline, same as hw3 gam.fit with s(Expend, 4)
-gam_seasonal <- gam(TotalQty ~ s(MonthNum, 4) + s(AvgPrice, 4) + s(NumInvoices, 4),
+gam_seasonal <- gam(TotalQty ~ s(MonthNum, 4) + s(Avgprice, 4) + s(NumInvoices, 4),
                     data = pm_train)
 
 par(mfrow = c(1, 3))
@@ -95,14 +94,14 @@ cat("Best spline df for seasonality:", best_df, "\n")
 
 # ── STEP 5: Random Forest ─────────────────────────────────────────────────────
 set.seed(1)
-rf_bulk <- randomForest(TotalQty ~ MonthNum + AvgPrice + NumInvoices,
+rf_bulk <- randomForest(TotalQty ~ MonthNum + Avgprice + NumInvoices,
                         data       = pm_train,
                         ntree      = 100,   # default is 500, but using 100 to speed up training due to size of data set
                         mtry       = 2,
                         importance = TRUE)
 
 importance(rf_bulk)
-varImpPlot(rf_bulk, main = "Variable Importance for Bulk Quantity")
+varImpPlot(rf_bulk, main = "Variable Importance for Bulk quantity")
 
 # UK test (in-distribution)
 rf_pred_uk <- predict(rf_bulk, pm_uk_test)

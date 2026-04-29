@@ -21,18 +21,17 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 
 # ── STEP 0: establishing db connection ────────────────────────────────────────
-db_path <- "database/retail.db"
+db_path <- "database/clean_retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
-df <- dbReadTable(con, "online_retail_clean") |>
+df <- dbReadTable(con, "clean_product_sales") |>
   mutate(
-    InvoiceDate = as.POSIXct(InvoiceDate, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-    Month       = floor_date(InvoiceDate, "month"),
-    MonthNum    = month(InvoiceDate),
-    MonthLbl    = month(InvoiceDate, label = TRUE, abbr = TRUE),
-    DayOfWeek   = wday(InvoiceDate, week_start = 1),
-    Hour        = hour(InvoiceDate),
-    Quarter     = quarter(InvoiceDate)
+    invoice_date = as.POSIXct(invoice_date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    Revenue      = quantity * price,
+    MonthNum     = month(invoice_date),
+    DayOfWeek    = wday(invoice_date, week_start = 1),
+    Hour         = hour(invoice_date),
+    Quarter      = quarter(invoice_date)
   )
 
 dbDisconnect(con) # finished working with a connection 
@@ -47,15 +46,15 @@ dbDisconnect(con) # finished working with a connection
 # Rationale: UK is the dominant market; non-UK serves as an OOD validation set
 # to assess international generalisability.
 
-# ── STEP 1: build invoice-level feature matrix (retain Country for splitting) ──
+# ── STEP 1: build invoice-level feature matrix (retain country for splitting) ──
 invoice_features <- df |>
-  mutate(Category = word(Description, 1)) |>
-  group_by(InvoiceNo, Country) |>
+  mutate(Category = word(description, 1)) |>
+  group_by(invoice_no, country) |>
   summarise(
     NumItems      = n(),
     TotalRevenue  = sum(Revenue),
-    AvgPrice      = mean(Price),
-    TotalQty      = sum(Quantity),
+    Avgprice      = mean(price),
+    TotalQty      = sum(quantity),
     NumCategories = n_distinct(Category),
     MonthNum      = first(MonthNum),
     DayOfWeek     = first(DayOfWeek),
@@ -64,34 +63,34 @@ invoice_features <- df |>
   )
 
 # ── STEP 2: define target product (most bought item, from UK training invoices) ─
-uk_invoices <- invoice_features |> filter(Country == "United Kingdom")
+uk_invoices <- invoice_features |> filter(country == "United Kingdom")
 
 set.seed(1)
 train_inv_idx <- sample(1:nrow(uk_invoices), 0.8 * nrow(uk_invoices))
 uk_train_inv  <- uk_invoices[train_inv_idx, ]
 uk_test_inv   <- uk_invoices[-train_inv_idx, ]
-nouk_inv      <- invoice_features |> filter(Country != "United Kingdom")
+nouk_inv      <- invoice_features |> filter(country != "United Kingdom")
 
 # Identify top product from UK training invoices only (avoids leakage)
 top_product <- df |>
-  filter(InvoiceNo %in% uk_train_inv$InvoiceNo) |>
-  count(Description, sort = TRUE) |>
+  filter(invoice_no %in% uk_train_inv$invoice_no) |>
+  count(description, sort = TRUE) |>
   slice(1) |>
-  pull(Description)
+  pull(description)
 
 cat("Modeling purchase likelihood for:", top_product, "\n")
 
 # ── STEP 3: label invoices that contain the target product ────────────────────
 target_invoices <- df |>
-  filter(Description == top_product) |>
-  distinct(InvoiceNo) |>
+  filter(description == top_product) |>
+  distinct(invoice_no) |>
   mutate(BoughtTarget = 1)
 
 add_target <- function(inv_df) {
   inv_df |>
-    left_join(target_invoices, by = "InvoiceNo") |>
+    left_join(target_invoices, by = "invoice_no") |>
     mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
-    select(-InvoiceNo, -Country) |>
+    select(-invoice_no, -country) |>
     na.omit()
 }
 

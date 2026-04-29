@@ -2,16 +2,16 @@ import sqlite3
 import pandas as pd
 from collections import Counter
 
-DB_FILE = "database/retail.db"
-TABLE = "online_retail_clean"
+DB_FILE = "database/clean_retail.db"
+TABLE = "clean_product_sales"
 
 conn = sqlite3.connect(DB_FILE)
-df = pd.read_sql(f"SELECT InvoiceNo, Description FROM {TABLE}", conn)
+df = pd.read_sql(f"SELECT invoice_no, description FROM {TABLE}", conn)
 conn.close()
 
 def get_recommendations(product_query, top_n=5):
     # find matching products
-    matches = df["Description"].dropna().unique()
+    matches = df["description"].dropna().unique()
     matches = [m for m in matches if product_query.upper() in m.upper()]
 
     if not matches:
@@ -23,7 +23,7 @@ def get_recommendations(product_query, top_n=5):
     print(f"\nFinding co-purchases for: {product}")
 
     # get all invoices containing this product
-    target_invoices = df[df["Description"] == product]["InvoiceNo"].unique()
+    target_invoices = df[df["description"] == product]["invoice_no"].unique()
 
     if len(target_invoices) == 0:
         print("No invoices found for this product.")
@@ -31,9 +31,9 @@ def get_recommendations(product_query, top_n=5):
 
     # get all OTHER items on those invoices
     co_purchases = df[
-        (df["InvoiceNo"].isin(target_invoices)) &
-        (df["Description"] != product)
-    ]["Description"]
+        (df["invoice_no"].isin(target_invoices)) &
+        (df["description"] != product)
+    ]["description"]
 
     counts = Counter(co_purchases)
     total_invoices = len(target_invoices)
