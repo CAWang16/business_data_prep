@@ -1,150 +1,165 @@
-# If bought X, buy Y -> Boosting (gbm), Random Forest, Association Rules
+# "If bought X, buy Y" -> Association Rules (Apriori)
 
-# Builds a binary co-purchase model for the most frequently bought product, 
-# predicting whether a given invoice contains that item using basket-level features 
-# like number of items, average price, total quantity, and time variables. 
-# A GBM (boosting) and a Random Forest are both trained on UK invoices and tested on non-UK invoices, 
-# with variable importance plots identifying which basket features most strongly predict co-purchase behavior.
+# ── SETUP ──────────────────────────────────────────────────────────────────────
+setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
-# ── SETUP ─────────────────────────────────────────────────────────────────────
 library(RSQLite)
 library(dplyr)
 library(lubridate)
 library(ggplot2)
 library(stringr)
-library(randomForest)
-library(gbm)       # Boosting
-library(splines)   # bs()
+library(arules)      # Apriori algorithm
+library(arulesViz)   # Rule visualization
 
-# seting correct wd
-setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
-
-
-# ── STEP 0: establishing db connection ────────────────────────────────────────
 db_path <- "database/clean_retail.db"
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
 df <- dbReadTable(con, "clean_product_sales") |>
   mutate(
     invoice_date = as.POSIXct(invoice_date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
-    Revenue      = quantity * price,
-    MonthNum     = month(invoice_date),
-    DayOfWeek    = wday(invoice_date, week_start = 1),
-    Hour         = hour(invoice_date),
-    Quarter      = quarter(invoice_date)
+    Revenue      = quantity * price
   )
 
-dbDisconnect(con) # finished working with a connection 
+dbDisconnect(con)
 
-# Boosting (gbm, same as hw4 ch8 Hitters/Caravan) predicts whether a given
-# invoice contains the most-bought product, using basket-level features.
-# Random Forest used for comparison and variable importance.
+# ── METHOD ─────────────────────────────────────────────────────────────────────
+# Apriori algorithm finds association rules of the form "if a customer buys
+# product X, they are likely to also buy product Y."
+# Three key metrics:
+#   - Support:    how often the pair appears together across all baskets
+#   - Confidence: P(Y | X) — given X was bought, how often was Y also bought
+#   - Lift:       confidence / expected confidence — lift > 1 means the
+#                 association is stronger than random chance
+#
 # Train/test strategy:
-#   - 80% of UK invoices -> training
-#   - 20% of UK invoices -> in-distribution test
-#   - All non-UK invoices -> out-of-distribution test
+#   - Rules learned from UK transactions only (training set)
+#   - Rules validated against non-UK transactions (out-of-distribution test)
 # Rationale: UK is the dominant market; non-UK serves as an OOD validation set
 # to assess international generalisability.
 
-# ── STEP 1: build invoice-level feature matrix (retain country for splitting) ──
-invoice_features <- df |>
-  mutate(Category = word(description, 1)) |>
-  group_by(invoice_no, country) |>
-  summarise(
-    NumItems      = n(),
-    TotalRevenue  = sum(Revenue),
-    Avgprice      = mean(price),
-    TotalQty      = sum(quantity),
-    NumCategories = n_distinct(Category),
-    MonthNum      = first(MonthNum),
-    DayOfWeek     = first(DayOfWeek),
-    Hour          = first(Hour),
-    .groups       = "drop"
+# ── STEP 1: build transaction lists ───────────────────────────────────────────
+# UK = training set
+uk_transactions <- df |>
+  filter(country == "United Kingdom") |>
+  dplyr::select(invoice_no, description) |>
+  distinct() |>
+  group_by(invoice_no) |>
+  summarise(items = list(description), .groups = "drop")
+
+# non-UK = out-of-distribution test set
+nouk_transactions <- df |>
+  filter(country != "United Kingdom") |>
+  dplyr::select(invoice_no, description) |>
+  distinct() |>
+  group_by(invoice_no) |>
+  summarise(items = list(description), .groups = "drop")
+
+cat("UK invoices (train):     ", nrow(uk_transactions), "\n")
+cat("non-UK invoices (test):  ", nrow(nouk_transactions), "\n")
+
+# ── STEP 2: convert to arules transaction format ───────────────────────────────
+uk_trans   <- as(uk_transactions$items, "transactions")
+nouk_trans <- as(nouk_transactions$items, "transactions")
+
+cat("\nUK transaction summary:\n")
+summary(uk_trans)
+
+# ── STEP 3: fit Apriori on UK transactions ────────────────────────────────────
+# supp  = item pair must appear in at least 1% of UK baskets
+# conf  = rule must be correct at least 20% of the time
+# minlen = 2 ensures at least one antecedent and one consequent
+rules <- apriori(
+  uk_trans,
+  parameter = list(
+    supp   = 0.01,
+    conf   = 0.20,
+    minlen = 2
   )
+)
 
-# ── STEP 2: define target product (most bought item, from UK training invoices) ─
-uk_invoices <- invoice_features |> filter(country == "United Kingdom")
+cat("\nRules summary:\n")
+summary(rules)
 
-set.seed(1)
-train_inv_idx <- sample(1:nrow(uk_invoices), 0.8 * nrow(uk_invoices))
-uk_train_inv  <- uk_invoices[train_inv_idx, ]
-uk_test_inv   <- uk_invoices[-train_inv_idx, ]
-nouk_inv      <- invoice_features |> filter(country != "United Kingdom")
+# Top 20 rules by lift
+cat("\nTop 20 rules by lift:\n")
+inspect(sort(rules, by = "lift")[1:20])
 
-# Identify top product from UK training invoices only (avoids leakage)
-top_product <- df |>
-  filter(invoice_no %in% uk_train_inv$invoice_no) |>
-  count(description, sort = TRUE) |>
-  slice(1) |>
-  pull(description)
+# ── STEP 4: validate on non-UK transactions ────────────────────────────────────
+# Check whether UK-derived rules also hold in non-UK markets
+# A rule "holds" in non-UK if its confidence is still >= 0.20 there
+rules_df <- as(rules, "data.frame")
 
-cat("Modeling purchase likelihood for:", top_product, "\n")
+# Extract LHS and RHS product names cleanly
+rules_df$lhs_clean <- gsub("\\{|\\}", "", rules_df$rules) |>
+  gsub(" =>.*", "", x = _) |>
+  trimws()
 
-# ── STEP 3: label invoices that contain the target product ────────────────────
-target_invoices <- df |>
-  filter(description == top_product) |>
-  distinct(invoice_no) |>
-  mutate(BoughtTarget = 1)
+rules_df$rhs_clean <- gsub(".*=> \\{|\\}", "", rules_df$rules) |>
+  trimws()
 
-add_target <- function(inv_df) {
-  inv_df |>
-    left_join(target_invoices, by = "invoice_no") |>
-    mutate(BoughtTarget = ifelse(is.na(BoughtTarget), 0, 1)) |>
-    select(-invoice_no, -country) |>
-    na.omit()
+# For each rule, compute confidence in non-UK data
+nouk_item_matrix <- as(nouk_trans, "matrix")
+
+compute_nouk_confidence <- function(lhs, rhs, item_matrix) {
+  if (!(lhs %in% colnames(item_matrix)) || !(rhs %in% colnames(item_matrix))) {
+    return(NA)
+  }
+  lhs_present  <- item_matrix[, lhs]
+  rhs_present  <- item_matrix[, rhs]
+  both_present <- lhs_present & rhs_present
+  if (sum(lhs_present) == 0) return(NA)
+  sum(both_present) / sum(lhs_present)
 }
 
-train_boost   <- add_target(uk_train_inv)   # UK 80%
-test_uk_boost <- add_target(uk_test_inv)    # UK 20%
-test_nouk_boost <- add_target(nouk_inv)     # non-UK
+cat("\nComputing non-UK confidence for top rules...\n")
+top_rules <- rules_df |>
+  arrange(desc(lift)) |>
+  head(50)
 
-cat("Training rows (UK 80%):            ", nrow(train_boost), "\n")
-cat("In-distribution test (UK 20%):     ", nrow(test_uk_boost), "\n")
-cat("Out-of-distribution test (non-UK): ", nrow(test_nouk_boost), "\n")
+top_rules$nouk_confidence <- mapply(
+  compute_nouk_confidence,
+  top_rules$lhs_clean,
+  top_rules$rhs_clean,
+  MoreArgs = list(item_matrix = nouk_item_matrix)
+)
 
-# ── STEP 4: Boosting ──────────────────────────────────────────────────────────
-# same gbm setup as hw4 Caravan (distribution = "bernoulli")
-boost_basket <- gbm(BoughtTarget ~ .,
-                    data              = train_boost,
-                    distribution      = "bernoulli",
-                    n.trees           = 1000,
-                    shrinkage         = 0.01,
-                    interaction.depth = 2)
+top_rules$confidence_drop <- top_rules$confidence - top_rules$nouk_confidence
 
-summary(boost_basket)  # variable importance — same as hw4
+cat("\nTop 20 rules — UK vs non-UK confidence:\n")
+print(
+  top_rules |>
+    dplyr::select(rules, support, confidence, lift, nouk_confidence, confidence_drop) |>
+    head(20)
+)
 
-# UK test (in-distribution)
-boost_probs_uk <- predict(boost_basket, test_uk_boost, n.trees = 1000, type = "response")
-boost_pred_uk  <- ifelse(boost_probs_uk > 0.2, 1, 0)
-cat("\n--- Boosting: UK Test (in-distribution) ---\n")
-print(table(Predicted = boost_pred_uk, Actual = test_uk_boost$BoughtTarget))
-cat("Test error rate:", mean(boost_pred_uk != test_uk_boost$BoughtTarget), "\n")
+# ── STEP 5: visualize ─────────────────────────────────────────────────────────
+# Scatter plot: support vs confidence, sized by lift
+plot(rules,
+     measure  = c("support", "confidence"),
+     shading  = "lift",
+     main     = "Association Rules: Support vs Confidence (shaded by Lift)")
 
-# non-UK test (out-of-distribution)
-boost_probs_nouk <- predict(boost_basket, test_nouk_boost, n.trees = 1000, type = "response")
-boost_pred_nouk  <- ifelse(boost_probs_nouk > 0.2, 1, 0)
-cat("\n--- Boosting: non-UK Test (out-of-distribution) ---\n")
-print(table(Predicted = boost_pred_nouk, Actual = test_nouk_boost$BoughtTarget))
-cat("Test error rate:", mean(boost_pred_nouk != test_nouk_boost$BoughtTarget), "\n")
+# Network graph of top 20 rules by lift
+plot(sort(rules, by = "lift")[1:20],
+     method = "graph",
+     main   = "Top 20 Co-Purchase Rules by Lift")
 
-# ── STEP 5: Random Forest ─────────────────────────────────────────────────────
-# same structure as hw4 rf.carseats
-set.seed(1)
-rf_basket <- randomForest(as.factor(BoughtTarget) ~ .,
-                          data       = train_boost,
-                          mtry       = 3,
-                          importance = TRUE)
+# ── STEP 6: export rules for recommend.py ─────────────────────────────────────
+export_rules <- as(rules, "data.frame") |>
+  arrange(desc(lift))
 
-# UK test (in-distribution)
-rf_pred_uk <- predict(rf_basket, test_uk_boost)
-cat("\n--- Random Forest: UK Test (in-distribution) ---\n")
-print(table(Predicted = rf_pred_uk, Actual = test_uk_boost$BoughtTarget))
-cat("Test error rate:", mean(rf_pred_uk != test_uk_boost$BoughtTarget), "\n")
+# Clean up LHS and RHS for Python lookup
+export_rules$LHS <- gsub("\\{|\\}", "", export_rules$rules) |>
+  gsub(" =>.*", "", x = _) |>
+  trimws()
 
-# non-UK test (out-of-distribution)
-rf_pred_nouk <- predict(rf_basket, test_nouk_boost)
-cat("\n--- Random Forest: non-UK Test (out-of-distribution) ---\n")
-print(table(Predicted = rf_pred_nouk, Actual = test_nouk_boost$BoughtTarget))
-cat("Test error rate:", mean(rf_pred_nouk != test_nouk_boost$BoughtTarget), "\n")
+export_rules$RHS <- gsub(".*=> \\{|\\}", "", export_rules$rules) |>
+  trimws()
 
-varImpPlot(rf_basket, main = "What Predicts Co-Purchase?")
+export_rules <- export_rules |>
+  dplyr::select(LHS, RHS, support, confidence, lift) |>
+  arrange(desc(lift))
+
+write.csv(export_rules, "data/processed/association_rules.csv", row.names = FALSE)
+cat("\nExported", nrow(export_rules), "rules to data/processed/association_rules.csv\n")
+cat("Run Next_likely_product.py to query recommendations interactively.\n")
