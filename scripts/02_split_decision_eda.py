@@ -315,16 +315,32 @@ print("\nExamples (DCGS ebay/update):")
 print(dcgs_subset.loc[is_ebay_update, ["StockCode", "Description"]].head(10).to_string(index=False))
 
 
-print("\n" + "=" * 60)
-print("DCGS SAMPLE (Q > 0, P > 0)")
-print("=" * 60)
-
 dcgs_paid = df.loc[
     is_dcgs & (df["Quantity"] > 0) & (df["Price"] > 0)
 ]
 
+# Inspect DCGS rows with Quantity > 0 and Price = 0
+print("\n" + "=" * 60)
+print("DCGS (Q > 0, P = 0) ROWS")
+print("=" * 60)
+
+dcgs_zero_price_pos_qty = df.loc[
+    is_dcgs & (df["Quantity"] > 0) & (df["Price"] == 0)
+]
+
+print(f"Total rows: {len(dcgs_zero_price_pos_qty):,}")
+
+if len(dcgs_zero_price_pos_qty) > 0:
+    print(dcgs_zero_price_pos_qty[[
+        "InvoiceNo", "StockCode", "Description", "Quantity", "Price"
+    ]].to_string(index=False))
+
+print("\n" + "=" * 60)
+print("DCGS SAMPLE (Q > 0, P > 0)")
+print("=" * 60)
+
 # Random sample (more useful than top rows)
-print(dcgs_paid.sample(20)[
+print(dcgs_paid.sample(20, random_state=67)[
     ["InvoiceNo", "StockCode", "Description", "Quantity", "Price"]
 ].to_string(index=False))
 
@@ -355,7 +371,121 @@ print("\n" + "=" * 60)
 print("NON-DCGS/GIFT SPECIAL STOCKCODES")
 print("=" * 60)
 
-print(df.loc[non_dcgs_gift_special, "StockCode"].value_counts().head(20))
+# Show top special StockCodes with their most common description
+special_subset = df.loc[non_dcgs_gift_special, ["StockCode", "Description"]].copy()
+
+# Get counts per StockCode
+counts = special_subset["StockCode"].value_counts().rename("count")
+
+# Get most common description per StockCode
+top_desc = (
+    special_subset
+    .groupby("StockCode")["Description"]
+    .agg(lambda x: x.value_counts().index[0] if len(x.dropna()) > 0 else None)
+    .rename("top_description")
+)
+
+# Count unique descriptions per StockCode
+unique_desc_count = (
+    special_subset
+    .groupby("StockCode")["Description"]
+    .nunique()
+    .rename("unique_descriptions")
+)
+
+# Combine into one table
+special_summary = pd.concat([counts, unique_desc_count], axis=1).head(20)
+
+print(special_summary.to_string())
+
+# ------------------------------------------------------------
+# Full unique descriptions for each non-DCGS/GIFT special StockCode
+# ------------------------------------------------------------
+
+print("\n" + "=" * 60)
+print("UNIQUE DESCRIPTIONS FOR EACH NON-DCGS/GIFT SPECIAL STOCKCODE")
+print("=" * 60)
+
+for code in special_summary.index:
+    descs = (
+        special_subset.loc[special_subset["StockCode"] == code, "Description"]
+        .dropna()
+        .drop_duplicates()
+        .tolist()
+    )
+
+    print(f"\n{code} ({len(descs)} unique descriptions):")
+
+    if len(descs) == 0:
+        print("  - [missing / NaN only]")
+    else:
+        for d in descs:
+            print(f"  - {d}")
+
+
+# ============================================================
+# HYPOTHESIS TEST: DOT CUSTOMERID PRESENCE
+# ============================================================
+
+print("\n" + "=" * 60)
+print("HYPOTHESIS TEST: DOT CUSTOMERID PRESENCE")
+print("=" * 60)
+
+dot_rows = df[df["StockCode"] == "DOT"]
+
+print(f"Total DOT rows: {len(dot_rows):,}")
+print(f"DOT rows with CustomerID: {dot_rows['CustomerID'].notna().sum():,}")
+print(f"DOT rows missing CustomerID: {dot_rows['CustomerID'].isna().sum():,}")
+print(f"DOT missing CustomerID rate: {dot_rows['CustomerID'].isna().mean():.2%}")
+
+if dot_rows["CustomerID"].notna().sum() > 0:
+    print("\nExamples of DOT rows with CustomerID:")
+    print(dot_rows.loc[
+        dot_rows["CustomerID"].notna(),
+        ["InvoiceNo", "StockCode", "Description", "Quantity", "Price", "CustomerID", "Country"]
+    ].head(16).to_string(index=False))
+
+print("\n" + "=" * 60)
+print("NON-DCGS/GIFT SPECIAL STOCKCODES — EXCLUSION BREAKDOWN")
+print("=" * 60)
+
+subset = df.loc[non_dcgs_gift_special].copy()
+
+# Masks
+is_c = subset["InvoiceNo"].astype(str).str.startswith("C")
+is_a = subset["InvoiceNo"].astype(str).str.startswith("A")
+is_pos_qty = subset["Quantity"] > 0
+is_pos_price = subset["Price"] > 0
+
+# Breakdown
+total = len(subset)
+
+cancellations = is_c.sum()
+admin = is_a.sum()
+neg_or_zero_qty = (~is_pos_qty).sum()
+zero_or_neg_price = (~is_pos_price).sum()
+
+# "Looks like clean sale structurally"
+candidate_clean_like = (~is_c) & (~is_a) & is_pos_qty & is_pos_price
+
+
+print(f"Total rows: {total:,}")
+print(f"Cancellations (C): {cancellations:,}")
+print(f"Admin (A): {admin:,}")
+print(f"Quantity <= 0: {neg_or_zero_qty:,}")
+print(f"Price <= 0: {zero_or_neg_price:,}")
+print(f"\nRows that LOOK like clean sales (Q>0, P>0, not A/C): {candidate_clean_like.sum():,}")
+
+# Compare POST + DOT volume against clean-sales transaction volume
+post_dot_rows = subset[subset["StockCode"].isin(["POST", "DOT"])]
+post_dot_invoice_count = post_dot_rows["InvoiceNo"].nunique()
+clean_sales_invoice_count = clean_sales["InvoiceNo"].nunique()
+
+print(f"POST + DOT unique invoices: {post_dot_invoice_count:,}")
+print(f"Clean sales unique invoices: {clean_sales_invoice_count:,}")
+print(f"POST + DOT invoices as % of clean sales invoices: {post_dot_invoice_count / clean_sales_invoice_count:.2%}")
+
+
 
 print("\n" + "=" * 60)
 print("PROVISIONAL DATASET DECISIONS")
@@ -384,6 +514,15 @@ print("\n6. DCGS rows:")
 print("   - StockCode contains 'DCGS'")
 print("   - Treat separately from main retail sales")
 
-print("\n7. Remaining non-DCGS/GIFT special StockCodes:")
+print("\n7. Shipping / carriage fee rows:")
+print("   - Remaining special StockCodes: DOT, POST, C2")
+print("   - Treat separately from product sales")
+
+print("\n8. Manual rows:")
+print("   - StockCode == 'M'")
+print("   - If not already captured by admin, cancellations, adjustments, free items, gift, or DCGS rules,")
+print("     then keep in clean sales as manual product-like sales, preferably with a flag")
+
+print("\n9. Other remaining non-DCGS/GIFT special StockCodes:")
 print("   - Review as financial/operational rows")
-print("   - Examples: POST, DOT, M, BANK CHARGES, ADJUST, AMAZONFEE")
+print("   - Examples: BANK CHARGES, ADJUST, AMAZONFEE, D, S, TEST001, TEST002")
