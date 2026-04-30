@@ -51,7 +51,7 @@ All scripts must be run **from the project root** (the folder containing `data/`
 #### Step 1 — Ingest the raw data into SQLite
 
 ```bash
-python scripts/setup_db.py
+python scripts/00_setup_db.py
 ```
 
 Reads `data/raw/online_retail_II.xlsx` (two sheets, ~44 MB), combines them, and writes
@@ -60,7 +60,7 @@ Reads `data/raw/online_retail_II.xlsx` (two sheets, ~44 MB), combines them, and 
 #### Step 2 — Validate raw field metadata
 
 ```bash
-python scripts/00_validate_source_metadata.py
+python scripts/01_validate_source_metadata.py
 ```
 
 Prints a structured validation report for every column: format conformance,
@@ -70,7 +70,7 @@ non-standard StockCodes, etc.).
 #### Step 3 — Split-decision EDA
 
 ```bash
-python scripts/01_split_decision_eda.py
+python scripts/02_split_decision_eda.py
 ```
 
 Cross-tabulates transaction types (sales, cancellations, free items, admin adjustments,
@@ -81,10 +81,10 @@ downstream cleaning.
 
 ```bash
 # Word document (.docx)
-python scripts/generate_report.py
+python scripts/03_generate_report.py
 
 # LaTeX source for Overleaf (.tex)
-python scripts/generate_report_tex.py
+python scripts/04_generate_report_tex.py
 ```
 
 Both scripts read from `database/retail.db` and write output to the project root:
