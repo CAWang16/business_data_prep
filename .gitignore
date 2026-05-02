@@ -2,6 +2,7 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+figures/*.png
 
 *.db
 *.sqlite
@@ -11,6 +12,8 @@ data/processed/*
 *.xlsx
 *.csv
 *.db
+*.pdf
+*.png
 
 # Windows download metadata
 *.Identifier
