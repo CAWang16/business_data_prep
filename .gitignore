@@ -2,7 +2,6 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-figures/*.png
 
 *.db
 *.sqlite
@@ -28,3 +27,6 @@ __pycache__/
 .RData
 test_*
 
+
+# .idea
+.idea/

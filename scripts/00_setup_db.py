@@ -5,8 +5,8 @@ import time
 
 
 
-raw_file_path = "../data/raw"
-db_path = "../database/"
+raw_file_path = "data/raw"
+db_path = "database/"
 
 excel_file = os.path.join(raw_file_path, "online_retail_II.xlsx")
 print(excel_file)
@@ -43,6 +43,7 @@ print(f"Total: {len(df)} rows, {len(df.columns)} columns")
 
 
 print(f"Writing to {db_file}...")
+os.makedirs(db_path, exist_ok=True)
 start = time.time()
 conn = sqlite3.connect(db_file)
 df.to_sql(table_name, conn, if_exists="replace", index=False)
