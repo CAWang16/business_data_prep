@@ -1,7 +1,7 @@
 if (!require("RSQLite", quietly = TRUE)) install.packages("RSQLite")
-if (!require("dplyr",     quietly = TRUE)) install.packages("dplyr")
-if (!require("DBI",       quietly = TRUE)) install.packages("DBI")
-if (!require("RSQLite",   quietly = TRUE)) install.packages("RSQLite")
+if (!require("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!require("DBI", quietly = TRUE)) install.packages("DBI")
+if (!require("RSQLite", quietly = TRUE)) install.packages("RSQLite")
 
 
 library(dplyr)
