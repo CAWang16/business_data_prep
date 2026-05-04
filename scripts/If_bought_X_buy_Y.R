@@ -1,9 +1,14 @@
 # "If bought X, buy Y" -> Association Rules (Apriori)
 
 # ── SETUP ──────────────────────────────────────────────────────────────────────
-setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
-
-if (!require("dplyr", quietly = TRUE)) install.packages("dplyr")
+if (!require("RSQLite",    quietly = TRUE)) install.packages("RSQLite")
+if (!require("dplyr",      quietly = TRUE)) install.packages("dplyr")
+if (!require("lubridate",  quietly = TRUE)) install.packages("lubridate")
+if (!require("ggplot2",    quietly = TRUE)) install.packages("ggplot2")
+if (!require("stringr",    quietly = TRUE)) install.packages("stringr")
+if (!require("arules",     quietly = TRUE)) install.packages("arules")
+if (!require("arulesViz",  quietly = TRUE)) install.packages("arulesViz")
+if (!require("rstudioapi", quietly = TRUE)) install.packages("rstudioapi")
 
 library(RSQLite)
 library(dplyr)
@@ -13,6 +18,10 @@ library(stringr)
 library(arules)      # Apriori algorithm
 library(arulesViz)   # Rule visualization
 
+# setting correct wd()
+setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
+
+# setting up db
 db_path <- "database/clean_retail.db"
 fig_path <- "figures"
 
