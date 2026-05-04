@@ -1,11 +1,19 @@
-**/.DS_Store
-venv/
-~$*
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+
+*.db
+*.sqlite
+*.sqlite3
 
 # Data files - teammates run setup_db.py to generate these locally
 *.xlsx
 *.csv
 *.db
+*.pdf
+*.png
 
 # Windows download metadata
 *.Identifier
@@ -20,6 +28,7 @@ __pycache__/
 .Rhistory
 .RData
 test_*
+
 
 # .idea
 .idea/
