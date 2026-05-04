@@ -7,6 +7,8 @@
 # A heatmap of average revenue by hour and day is produced as the main visualization.
 
 # ── SETUP ─────────────────────────────────────────────────────────────────────
+if (!require("dplyr", quietly = TRUE)) install.packages("dplyr")
+
 library(RSQLite)
 library(dplyr)
 library(lubridate)
