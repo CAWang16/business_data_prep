@@ -12,9 +12,8 @@ python scripts/02_split_decision_eda.py
 python scripts/03_clean_data.py
 python scripts/04_quick_db_validation.py
 
-Rscript scripts/data_cleaning.R
-Rscript scripts/Clustering.R
-Rscript scripts/future_prediction_using_past.R
+
+Rscript scripts/clustering.R
 Rscript scripts/If_bought_X_buy_Y.R
 Rscript scripts/Next_likely_product.py
 Rscript scripts/predict_tomorrow_spike.R
