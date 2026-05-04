@@ -3,6 +3,8 @@
 # ── SETUP ──────────────────────────────────────────────────────────────────────
 setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
+if (!require("dplyr", quietly = TRUE)) install.packages("dplyr")
+
 library(RSQLite)
 library(dplyr)
 library(lubridate)

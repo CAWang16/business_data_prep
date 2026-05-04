@@ -7,6 +7,8 @@
 # The non-UK product-month data serves as the out-of-distribution test set for the Random Forest.
 
 # ── SETUP ─────────────────────────────────────────────────────────────────────
+if (!require("dplyr", quietly = TRUE)) install.packages("dplyr")
+
 library(RSQLite)
 library(dplyr)
 library(lubridate)
