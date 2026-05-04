@@ -25,6 +25,8 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 # ── STEP 0: establishing db connection ────────────────────────────────────────
 db_path <- "database/clean_retail.db"
+fig_path <- "figures"
+
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
 df <- dbReadTable(con, "clean_product_sales") |>
@@ -80,8 +82,11 @@ cat("Out-of-distribution test (non-UK): ", nrow(pm_nouk_test), "\n")
 gam_seasonal <- gam(TotalQty ~ s(MonthNum, 4) + s(Avgprice, 4) + s(NumInvoices, 4),
                     data = pm_train)
 
+png(file.path(fig_path, "gam_seasonal.png"), width = 1200, height = 600, res = 150)
 par(mfrow = c(1, 3))
 plot(gam_seasonal, se = TRUE, col = "blue")
+dev.off()
+
 summary(gam_seasonal)  # check "Anova for Nonparametric Effects"
 
 # ── STEP 4: regression spline CV to find best degrees of freedom ───────────────
@@ -102,8 +107,12 @@ rf_bulk <- randomForest(TotalQty ~ MonthNum + Avgprice + NumInvoices,
                         mtry       = 2,
                         importance = TRUE)
 
+
+
+png(file.path(fig_path, "var_importance.png"), width = 1200, height = 600, res = 150)
 importance(rf_bulk)
 varImpPlot(rf_bulk, main = "Variable Importance for Bulk quantity")
+dev.off()
 
 # UK test (in-distribution)
 rf_pred_uk <- predict(rf_bulk, pm_uk_test)

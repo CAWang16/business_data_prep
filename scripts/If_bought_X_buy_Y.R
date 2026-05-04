@@ -14,6 +14,8 @@ library(arules)      # Apriori algorithm
 library(arulesViz)   # Rule visualization
 
 db_path <- "database/clean_retail.db"
+fig_path <- "figures"
+
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
 df <- dbReadTable(con, "clean_product_sales") |>
@@ -136,15 +138,19 @@ print(
 
 # ── STEP 5: visualize ─────────────────────────────────────────────────────────
 # Scatter plot: support vs confidence, sized by lift
+png(file.path(fig_path, "association_rules_supp_v_conf.png"), width = 1200, height = 600, res = 150)
 plot(rules,
      measure  = c("support", "confidence"),
      shading  = "lift",
      main     = "Association Rules: Support vs Confidence (shaded by Lift)")
+dev.off()
 
 # Network graph of top 20 rules by lift
+png(file.path(fig_path, "top_20_co-purchase_rules_lift.png"), width = 1200, height = 600, res = 150)
 plot(sort(rules, by = "lift")[1:20],
      method = "graph",
      main   = "Top 20 Co-Purchase Rules by Lift")
+dev.off()
 
 # ── STEP 6: export rules for recommend.py ─────────────────────────────────────
 export_rules <- as(rules, "data.frame") |>

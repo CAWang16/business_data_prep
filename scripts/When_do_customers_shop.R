@@ -22,6 +22,8 @@ setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 # establishing db connection
 db_path <- "database/clean_retail.db"
+fig_path <- "figures"
+
 con <- dbConnect(RSQLite::SQLite(), db_path)
 
 df <- dbReadTable(con, "clean_product_sales") |>
@@ -146,6 +148,7 @@ print(table(Predicted = lda_pred_nouk$class, Actual = nouk_test_inv$IsPeakHour))
 cat("Test error rate:", mean(lda_pred_nouk$class != nouk_test_inv$IsPeakHour), "\n")
 
 # ── STEP 5: Visualize ──────────────────────────────────────────────────────────
+png(file.path(fig_path, "avg_rev_by_hour_day.png"), width = 1200, height = 600, res = 150)
 df |>
   group_by(Hour, DayOfWeek) |>
   summarise(AvgRevenue = mean(Revenue), .groups = "drop") |>
@@ -156,4 +159,5 @@ df |>
   labs(title = "Average Revenue by Hour and Day of Week",
        x = "Hour of Day", y = NULL, fill = "Avg Revenue (GBP)") +
   theme_minimal()
+dev.off()
 
