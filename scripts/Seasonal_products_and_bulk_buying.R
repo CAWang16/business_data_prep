@@ -26,8 +26,15 @@ library(gam)       # GAM / smoothing splines
 library(splines)   # bs()
 library(boot)      # cv.glm()
 
-# seting correct wd
-setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
+# setting correct wd()
+if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+  setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
+} else {
+  script_path <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[
+    grep("--file=", commandArgs(trailingOnly = FALSE))
+  ]))
+  setwd(file.path(dirname(script_path), ".."))
+}
 
 
 # ── STEP 0: establishing db connection ────────────────────────────────────────

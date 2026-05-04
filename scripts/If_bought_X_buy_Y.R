@@ -8,7 +8,16 @@ if (!require("ggplot2",    quietly = TRUE)) install.packages("ggplot2")
 if (!require("stringr",    quietly = TRUE)) install.packages("stringr")
 if (!require("arules",     quietly = TRUE)) install.packages("arules")
 if (!require("arulesViz",  quietly = TRUE)) install.packages("arulesViz")
-if (!require("rstudioapi", quietly = TRUE)) install.packages("rstudioapi")
+
+# setting correct wd()
+if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+  setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
+} else {
+  script_path <- normalizePath(sub("--file=", "", commandArgs(trailingOnly = FALSE)[
+    grep("--file=", commandArgs(trailingOnly = FALSE))
+  ]))
+  setwd(file.path(dirname(script_path), ".."))
+}
 
 library(RSQLite)
 library(dplyr)
@@ -18,8 +27,6 @@ library(stringr)
 library(arules)      # Apriori algorithm
 library(arulesViz)   # Rule visualization
 
-# setting correct wd()
-setwd(file.path(dirname(rstudioapi::getActiveDocumentContext()$path), ".."))
 
 # setting up db
 db_path <- "database/clean_retail.db"
