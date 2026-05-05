@@ -122,18 +122,6 @@ Rscript scripts/predict_tomorrow_spike.R
 python scripts/Next_likely_product.py
 ```
 
-**Step 8 — Generate reports**
-```bash
-# Word document
-python scripts/generate_report.py
-
-# LaTeX source (for Overleaf)
-python scripts/generate_report_tex.py
-```
-
-Output files `report.docx` and `report.tex` will appear in the project root.
-
-
 ### 6. Report Link
 
 Visit our report here:
