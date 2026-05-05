@@ -134,6 +134,7 @@ python scripts/generate_report_tex.py
 Output files `report.docx` and `report.tex` will appear in the project root.
 
 
-### 5. Report Link
+### 6. Report Link
 
+Visit our report here:
 https://drive.google.com/file/d/1S3pBaiYYAXTcSZzJqfQOqENwfak-mlbm/view?usp=sharing
