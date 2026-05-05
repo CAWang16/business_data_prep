@@ -1,527 +1,288 @@
-\documentclass[12pt,a4paper]{article}
+\documentclass[10pt,a4paper]{article}
 
-\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage[a4paper, margin=1.45cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
 \usepackage{booktabs}
-\usepackage{longtable}
+\usepackage{tabularx}
 \usepackage{array}
-\usepackage{graphicx}
-\usepackage{hyperref}
-\usepackage{parskip}
-\usepackage{titlesec}
 \usepackage{enumitem}
 \usepackage{caption}
-\usepackage{microtype}
-\usepackage[T1]{fontenc}
-\usepackage[utf8]{inputenc}
-\usepackage{lmodern}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{graphicx}
 
-\hypersetup{
-    colorlinks=true,
-    linkcolor=blue,
-    urlcolor=blue,
-    citecolor=blue
-}
+\hypersetup{colorlinks=true, urlcolor=blue}
+\captionsetup{font=footnotesize, labelfont=bf}
 
-\captionsetup{font=small, labelfont=bf}
+\titleformat{\section}{\normalsize\bfseries}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\small\bfseries}{}{0em}{}
+\titlespacing{\section}{0pt}{5pt}{2pt}
+\titlespacing{\subsection}{0pt}{3pt}{1pt}
 
-\title{\textbf{Online Retail II}\\[0.5em]
-       \large Data Processing \& Analysis Report}
-\author{Carl \& Anders\\[0.3em]
-        \small CSP 571 --- Spring 2026}
-\date{April 2026}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
+
+\setlist[itemize]{leftmargin=1.2em, itemsep=0pt, topsep=1pt}
+
+\title{\vspace{-2em}\textbf{Online Retail II --- Analysis and Report}\\[1em]
+\small Carl, Cheng An, Taylor, Cyrus \quad | \quad CSP 571 --- Spring 2026 \quad | \quad April 2026}
+\date{}
 
 \begin{document}
 \maketitle
-\tableofcontents
-\newpage
-
+\vspace{0em}
 
 \section{Abstract}
 
-This report documents the full data processing and exploratory analysis pipeline applied to the UCI Online Retail II dataset, covering transactions from a UK-based non-store online retailer between December 2009 and December 2011. The dataset comprises 1,067,371 raw transaction records spanning eight fields. Our work proceeds in three phases: (1)~metadata validation of raw source fields to identify structural anomalies and format inconsistencies; (2)~split-decision exploratory data analysis to classify records into semantically distinct transaction types; and (3)~computation of summary statistics, data visualisations, and feature extraction in preparation for downstream modelling. Key findings include that approximately 22.8% of records lack a CustomerID, that InvoiceNo and StockCode encode multiple transaction types (sales, cancellations, accounting adjustments, free promotions), and that a structured seven-category split is required before any customer-level or product-level analysis can be conducted reliably.
+\textit{Research Question: How can purchase timing, product associations, seasonal demand patterns, and next-day demand spike prediction be used to optimize stocking decisions and maximize revenue?}
 
-\newpage
+Five modeling questions guide the analysis: (1) when do customers shop, and does this generalize internationally? (2) which product characteristics predict seasonal bulk demand? (3) if a customer bought X, what else will they buy? (4) can next-day demand spikes be predicted using temporal and demand features? (5) which customer segments exist based on purchasing behaviour, and where do re-engagement opportunities lie?
 
-\section{Overview}
-
-\subsection{Problem Statement}
-
-E-commerce retailers accumulate vast volumes of transactional data whose raw form is rarely suitable for direct analysis. The Online Retail II dataset presents several challenges representative of real-world retail data: mixed transaction semantics encoded within shared fields (sales, returns, administrative adjustments, and free promotions all reside in the same table); pervasive missing values in the CustomerID field; non-standard StockCode identifiers for service and operational entries; and naming inconsistencies in geographic fields.
-
-The primary objective of this project is to design and implement a reproducible data processing pipeline that: (a)~validates the structural integrity of raw source fields; (b)~identifies and separates semantically distinct record types; (c)~applies principled cleaning and transformation rules with explicit assumptions; and (d)~extracts analytic features that support downstream customer segmentation and purchase-pattern modelling.
-
-\subsection{Related Work / Literature Review}
-
-Retail transaction datasets have been extensively studied in the data mining literature. RFM (Recency, Frequency, Monetary) analysis, introduced by Bult and Wansbeek (1995) and popularised by Hughes (1994), remains one of the most widely applied frameworks for customer value segmentation and is directly applicable to invoice-level data such as the Online Retail II dataset.
-
-Chen et al.\ (2012) used an earlier version of this dataset (Online Retail I) to demonstrate data mining techniques for customer segmentation using K-Means clustering on RFM features, establishing a widely cited baseline for this source. Daqing Chen's original UCI submission noted that the dataset contains a mix of wholesale and retail customers, which has implications for any per-unit price analysis.
-
-More recent work has extended transaction-level analysis to sequence modelling and collaborative filtering. Hidasi et al.\ (2016) demonstrated session-based recurrent neural networks for next-item recommendation, while Devooght and Bersini (2017) compared collaborative filtering approaches on transactional purchase histories. These downstream applications all share the upstream requirement of clean, well-typed transaction records, motivating the careful data processing approach documented in this report.
-
-Data cleaning practices for retail datasets are discussed by Rahm and Do (2000), who classify data quality problems into single-source and multi-source issues. The challenges encountered in this project --- missing identifiers, mixed semantics within a single column, and implicit coding conventions (C-prefixed cancellation invoices, A-prefixed accounting entries) --- are consistent with their taxonomy of schema-level and instance-level anomalies.
-
-\subsection{Proposed Methodology}
-
-Our methodology follows a sequential, script-driven pipeline with one Python script per logical stage, each operating on the shared SQLite database. This design keeps each stage independently reproducible and auditable.
-
-\begin{itemize}[leftmargin=1.5em]
-
-  \item \textbf{Stage 0 --- Data Ingestion} (\texttt{setup\_db.py}): Load both Excel sheets from the raw source file into a single SQLite table.
-
-  \item \textbf{Stage 1 --- Metadata Validation} (\texttt{00\_validate\_source\_metadata.py}): Validate each raw field for format conformance, value ranges, and missingness.
-
-  \item \textbf{Stage 2 --- Split-Decision EDA} (\texttt{01\_split\_decision\_eda.py}): Classify records into transaction types using cross-tabulation and overlap analysis.
-
-  \item \textbf{Stage 3 --- Cleaning \& Transformation}: Apply the split decisions to produce a filtered, typed, and enriched table ready for analysis.
-
-  \item \textbf{Stage 4 --- Analysis}: Compute summary statistics, generate visualisations, and extract modelling features.
-
-\end{itemize}
-
-\newpage
+\textbf{Key findings:} UK transactions concentrate in business hours, especially Tuesday--Thursday from 08:00--17:00. Seasonal demand peaks in October--November, with invoice frequency as the dominant stocking signal. Apriori produced 1,268 co-purchase rules mapping clearly to product families. For next-day spike prediction, GBM at a decision threshold of 0.3 achieved the highest UK recall at 65.5\%. Customer segmentation identified four distinct RFM-based tiers, with 1,230 dormant high-value customers representing a re-engagement opportunity exceeding \pounds250,000. All models degraded on non-UK data, suggesting region-specific recalibration is required.
 
 \section{Data Processing}
 
-\subsection{Data Description}
+The raw Online Retail II data exhibited several quality issues, including missing product descriptions, inconsistent product labeling, and non-retail transaction records such as administrative entries, returns, financial adjustments, and free-item transactions. The data processing pipeline was designed to isolate high-confidence retail sales while preserving non-standard records in separate datasets for audit and validation.
 
-The Online Retail II dataset (UCI Machine Learning Repository, donated by Daqing Chen, London South Bank University) covers transactions of a UK-based online retailer that primarily sells unique all-occasion gift-ware to wholesale customers. The data spans two consecutive fiscal years delivered as two Excel sheets.
+\subsection{Transaction Filtering}
 
-\begin{longtable}{p{0.25\textwidth} p{0.65\textwidth}}
-\caption{Dataset overview} \label{tab:dataset_overview} \\
-\toprule
-\textbf{Property} & \textbf{Value} \\
-\midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Property} & \textbf{Value} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-Source & UCI Machine Learning Repository --- Online Retail II \\
-Format & Microsoft Excel (.xlsx) \\
-Sheets & Year 2009--2010 (525,461 rows),  Year 2010--2011 (541,910 rows) \\
-Date range & 01 Dec 2009 -- 09 Dec 2011 \\
-Total rows (combined) & 1,067,371 \\
-Columns & 8 \\
-\end{longtable}
+The \texttt{InvoiceNo}, \texttt{quantity}, and \texttt{price} variables were used to classify transaction types. Invoices beginning with \texttt{C} were treated as cancellations or returns, while invoices beginning with \texttt{A} were treated as administrative/accounting records. Rows with negative quantity and zero price were classified as inventory adjustments, and rows with positive quantity and zero price were classified as free or promotional items. Standard clean sales were defined as records with positive quantity and positive price, excluding cancellations, administrative rows, adjustments, free items, shipping fees, gift vouchers, DCGS entries, special operational codes, and manual rows. Manual entries were isolated as product-like sales, allowing them to be optionally included or excluded depending on the analysis.
 
-Note on source column names: the raw Excel file uses \texttt{Invoice}, \texttt{Customer ID}, and \texttt{Price} for what the official specification calls \texttt{InvoiceNo}, \texttt{CustomerID}, and \texttt{UnitPrice} respectively. This report uses the official names throughout. Fields are nominal (categorical) unless noted: \texttt{Quantity}, \texttt{InvoiceDate}, and \texttt{UnitPrice} are numeric.
+\subsection{Product Description and Stock Code Standardization}
 
-\begin{longtable}{p{0.14\textwidth} p{0.42\textwidth} p{0.36\textwidth}}
-\caption{Official column definitions and observed deviations} \label{tab:col_defs} \\
-\toprule
-\textbf{Field} & \textbf{Official Definition} & \textbf{Observed Deviations} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Field} & \textbf{Official Definition} & \textbf{Observed Deviations} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-InvoiceNo & 6-digit integral number uniquely assigned to each transaction. 'C' prefix = cancellation. & 6 rows carry 'A' prefix (accounting adjustments) --- undocumented in spec \\
-StockCode & 5-digit integral number uniquely assigned to each distinct product. & Suffix variants (e.g. 85123A) and fully non-standard codes exist --- spec says 5-digit integral only \\
-Description & Product (item) name. & approx. 2\% of rows missing \\
-Quantity & Quantities of each product per transaction. Numeric. & Negative values present (returns / adjustments) \\
-InvoiceDate & Day and time when the transaction was generated. Numeric. & No deviations --- all values parse successfully \\
-UnitPrice & Product price per unit in sterling (\pounds{}). Numeric. & Zero and negative values present; stored as 'Price' in source file \\
-CustomerID & 5-digit integral number uniquely assigned to each customer. & approx. 25\% of rows missing \\
-Country & Name of the country where the customer resides. & 'Unspecified' entries present; naming inconsistencies (e.g. EIRE vs Ireland) \\
-\end{longtable}
+The \texttt{stock\_code} variable was treated as the primary product identifier. This was necessary because product descriptions were not always consistent: identical products sometimes appeared with spelling differences, spacing differences, or operational labels such as ``found'', ``lost'', or ``damaged''. The pipeline first filled missing descriptions when a stock code had exactly one known description. It then identified noise labels and assigned each product a canonical description using the most frequent non-noise description associated with that \texttt{stock\_code}. This approach assumes that each stock code corresponds to one underlying product, while acknowledging that special stock codes such as shipping charges, gift vouchers, and administrative codes require separate handling.
 
-\subsection{Data Cleaning}
+\subsection{Data Quality Improvements}
 
-Cleaning decisions were derived from the metadata validation output of \texttt{00\_validate\_source\_metadata.py}.
-
-\subsubsection{InvoiceNo}
-
-The official specification defines InvoiceNo as a 6-digit integral number, with a \texttt{C} prefix indicating a cancellation. No other prefixes are documented.
-
-Of 1,067,371 rows, 1,067,365 conform to the spec. The remaining 6 rows carry an \texttt{A} prefix and represent bad-debt accounting adjustment entries --- an undocumented transaction type not described in the official field definition. These rows are excluded from all downstream analysis.
-
-\begin{longtable}{p{0.48\textwidth} p{0.11\textwidth} p{0.30\textwidth}}
-\caption{InvoiceNo validation against official spec} \label{tab:invoiceno} \\
-\toprule
-\textbf{Category} & \textbf{Count} & \textbf{Action} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Category} & \textbf{Count} & \textbf{Action} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-Standard sale (\#\#\#\#\#\#) --- spec-compliant & 1,047,871 & Retain --- classify as sale \\
-Cancellation (C\#\#\#\#\#\#) --- spec-compliant & 19,494 & Retain --- classify as return \\
-Accounting adjustment (A\#\#\#\#\#\#) --- undocumented deviation & 6 & Exclude \\
-Total & 1,067,371 & --- \\
-\end{longtable}
-
-\subsubsection{CustomerID}
-
-CustomerID is missing for 243,007 rows (22.8% of the dataset). All 824,364 non-missing values conform to the 5-digit format; no format violations were found. Missing CustomerIDs are retained in non-customer analyses but excluded from customer-level modelling.
-
-\subsubsection{Quantity \& UnitPrice}
-
-\begin{longtable}{p{0.22\textwidth} p{0.15\textwidth} p{0.53\textwidth}}
-\caption{Quantity value breakdown} \label{tab:quantity} \\
-\toprule
-\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-Quantity > 0 & 1,044,421 & Standard sale or free promotional item \\
-Quantity = 0 & 0 & Data anomaly --- reviewed case by case \\
-Quantity < 0 & 22,950 & Return / cancellation or internal adjustment \\
-\end{longtable}
-
-\begin{longtable}{p{0.22\textwidth} p{0.15\textwidth} p{0.53\textwidth}}
-\caption{UnitPrice value breakdown} \label{tab:price} \\
-\toprule
-\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Bucket} & \textbf{Count} & \textbf{Interpretation} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-UnitPrice > 0 & 1,061,164 & Revenue-generating transaction \\
-UnitPrice = 0 & 6,202 & Free item or non-revenue system entry \\
-UnitPrice < 0 & 5 & Bad-debt accounting adjustment --- exclude \\
-\end{longtable}
-
-\subsubsection{InvoiceDate}
-
-All 1,067,371 InvoiceDate values parsed successfully with no unparseable dates. The dataset spans 01 December 2009 to 09 December 2011.
-
-\subsubsection{StockCode}
-
-The official specification defines StockCode as a 5-digit integral number. Validation reveals two classes of deviation:
-
-\begin{longtable}{p{0.32\textwidth} p{0.10\textwidth} p{0.12\textwidth} p{0.32\textwidth}}
-\caption{StockCode validation against official spec} \label{tab:stockcode} \\
-\toprule
-\textbf{Pattern} & \textbf{Rows} & \textbf{Unique codes} & \textbf{Treatment} \\
-\midrule
-\endfirsthead
-\multicolumn{4}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Pattern} & \textbf{Rows} & \textbf{Unique codes} & \textbf{Treatment} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{4}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-5-digit numeric (e.g. 85123) --- spec-compliant & 932,385 & 3,590 & Standard product SKU --- include \\
-5-digit + letter suffix (e.g. 85123A) --- deviation from spec & 128,893 & 1,652 & Product variant --- include (spec caveat noted) \\
-Fully non-standard (e.g. POST, DOT, M, DCGS, gift) --- deviation from spec & 6,093 & 62 & Service / admin entry --- separate or exclude \\
-\end{longtable}
-
-Non-standard special codes include \texttt{POST} (postage), \texttt{DOT} (dotcom), \texttt{M} (manual), \texttt{BANK CHARGES}, \texttt{ADJUST}, \texttt{AMAZONFEE}, and the \texttt{DCGS} and \texttt{gift} code families.
-
-\subsubsection{Country}
-
-Country has no missing or blank values across all 1,067,371 rows. There are 43 unique country labels. 756 rows (0.07%) carry the value \texttt{Unspecified}. Naming inconsistencies (e.g.\ \texttt{EIRE} instead of \texttt{Ireland}) are standardised in the transformation stage.
-
-\begin{longtable}{p{0.45\textwidth} p{0.35\textwidth}}
-\caption{Top 10 countries by row count} \label{tab:countries} \\
-\toprule
-\textbf{Country} & \textbf{Row Count} \\
-\midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Country} & \textbf{Row Count} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-United Kingdom & 981,330 \\
-EIRE & 17,866 \\
-Germany & 17,624 \\
-France & 14,330 \\
-Netherlands & 5,140 \\
-Spain & 3,811 \\
-Switzerland & 3,189 \\
-Belgium & 3,123 \\
-Portugal & 2,620 \\
-Australia & 1,913 \\
-\end{longtable}
-
-\subsubsection{Description}
-
-Description is missing for 4,382 rows (0.41%). Missing values are filled from the most common description associated with each StockCode in the downstream transformation stage.
-
-\subsection{Data Transformation \& Assumptions}
-
-Following the split-decision EDA (\texttt{01\_split\_decision\_eda.py}), records are assigned to one of seven mutually exclusive categories.
-
-\begin{longtable}{p{0.22\textwidth} p{0.26\textwidth} p{0.09\textwidth} p{0.30\textwidth}}
-\caption{Transaction type split decisions} \label{tab:split} \\
-\toprule
-\textbf{Category} & \textbf{Rule} & \textbf{Count} & \textbf{Disposition} \\
-\midrule
-\endfirsthead
-\multicolumn{4}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Category} & \textbf{Rule} & \textbf{Count} & \textbf{Disposition} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{4}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-Admin / accounting adjustments & InvoiceNo starts with 'A' & 6 & Exclude from all analyses \\
-Cancellation invoices & InvoiceNo starts with 'C' & 19,494 & Separate returns analysis \\
-Internal inventory adjustments & Qty < 0, UnitPrice = 0, not C/A & 3,457 & Exclude from sales analyses \\
-Free items / promotions & Qty > 0, UnitPrice = 0, not C/A & 2,745 & Separate promotions analysis \\
-Gift vouchers & StockCode contains 'gift' & 101 & Separate voucher analysis \\
-DCGS codes & StockCode contains 'DCGS' & 158 & Separate channel analysis \\
-Clean sales & Qty > 0, UnitPrice > 0, not C/A, not gift/DCGS & 1,041,669 & Primary analysis dataset \\
-\end{longtable}
-
-\noindent\textbf{Key assumptions:}
-
-\begin{itemize}[leftmargin=1.5em]
-
-  \item A \texttt{C}-prefixed invoice always represents a cancellation regardless of Quantity sign. One exception (1 row with positive Quantity on a C-invoice) has been identified and excluded from both datasets.
-
-  \item Rows with negative Quantity but no C-prefix (3,457 rows) are primarily administrative adjustments and are excluded from sales analysis.
-
-  \item Zero-UnitPrice rows with positive Quantity are treated as promotional/free items and are not counted as revenue-generating sales.
-
-  \item DCGS and gift StockCode families are treated as separate channels because their price and description patterns differ systematically from standard product SKUs.
-
-  \item Missing CustomerID is retained in product-level and geographic analyses but excluded from customer-level segmentation analyses.
-
-\end{itemize}
-
-\newpage
+The cleaning process produced measurable improvements in dataset quality. The raw data contained over 4{,}000 missing product descriptions, which were reduced to 363 remaining missing descriptions after cleaning and standardization. In addition, approximately 6\% of all rows required description standardization, indicating moderate inconsistency in product labeling. After rule-based filtering, approximately 97\% of the full dataset was classified as high-confidence retail sales. The complete cleaned dataset was stored as \texttt{cleaned\_retail\_all}, while derived tables such as \texttt{clean\_product\_sales}, \texttt{manual\_product\_sales}, \texttt{cancellations}, and \texttt{inventory\_adjustments} were stored separately for downstream analysis.
 
 \section{Data Analysis}
-
 \subsection{Summary Statistics}
 
-Summary statistics are computed on the clean-sales subset (Quantity $>$ 0, UnitPrice $>$ 0, not C/A-invoice, not gift/DCGS) unless otherwise noted.
+Summary statistics are computed on the clean-sales subset (positive quantity and price, excluding cancellations and non-product codes).
 
-\begin{longtable}{p{0.55\textwidth} p{0.35\textwidth}}
-\caption{Clean-sales summary statistics} \label{tab:summary} \\
+\begin{table}[H]
+\centering
+\caption{Key summary statistics (clean sales)}
+\footnotesize
+\begin{tabular}{lr}
 \toprule
-\textbf{Metric} & \textbf{Value} \\
+Metric & Value \\
 \midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Metric} & \textbf{Value} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
+Rows (clean sales) & $\sim$1.04M \\
+Unique invoices & $\sim$40K \\
+Unique customers & $\sim$5.9K \\
+Unique products & $\sim$4.9K \\
+Total revenue & $\sim$\pounds{}21M \\
+Avg revenue / invoice & $\sim$\pounds{}523 \\
 \bottomrule
-\endlastfoot
-Clean sale rows & 1,041,669 \\
-Unique invoices & 40,076 \\
-Unique customers (with CustomerID) & 5,878 \\
-Unique products (StockCode) & 4,915 \\
-Total revenue (\pounds{}) & \pounds{}20,961,532.51 \\
-Avg revenue per invoice (\pounds{}) & \pounds{}523.04 \\
-Avg UnitPrice (\pounds{}) & \pounds{}4.07 \\
-Avg quantity per line & 11.0 \\
-Date range & 01 Dec 2009 -- 09 Dec 2011 \\
-\end{longtable}
-
-\begin{longtable}{p{0.12\textwidth} p{0.55\textwidth} p{0.18\textwidth}}
-\caption{Top 10 products by total quantity sold} \label{tab:top_products} \\
-\toprule
-\textbf{StockCode} & \textbf{Description} & \textbf{Total Qty Sold} \\
-\midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{StockCode} & \textbf{Description} & \textbf{Total Qty Sold} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-84077 & WORLD WAR 2 GLIDERS ASSTD DESIGNS & 110,138 \\
-85099B & JUMBO BAG RED RETROSPOT & 98,349 \\
-21212 & PACK OF 72 RETROSPOT CAKE CASES & 96,560 \\
-85123A & WHITE HANGING HEART T-LIGHT HOLDER & 96,147 \\
-22197 & SMALL POPCORN HOLDER & 89,898 \\
-84879 & ASSORTED COLOUR BIRD ORNAMENT & 81,809 \\
-23843 & PAPER CRAFT , LITTLE BIRDIE & 80,995 \\
-23166 & MEDIUM CERAMIC TOP STORAGE JAR & 78,033 \\
-17003 & BROCADE RING PURSE  & 71,430 \\
-21977 & PACK OF 60 PINK PAISLEY CAKE CASES & 56,794 \\
-\end{longtable}
-
-Returns (C-invoice rows) account for 19,494 records (1.83% of the raw dataset), confirming that cancellations are a material component of the data.
-
-\begin{longtable}{p{0.50\textwidth} p{0.35\textwidth}}
-\caption{Top countries by missing CustomerID rate} \label{tab:missing_cid} \\
-\toprule
-\textbf{Country} & \textbf{Missing CustomerID Rate} \\
-\midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Country} & \textbf{Missing CustomerID Rate} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
-\bottomrule
-\endlastfoot
-Hong Kong & 100.0\% \\
-Bermuda & 100.0\% \\
-Bahrain & 53.2\% \\
-Unspecified & 30.7\% \\
-RSA & 27.2\% \\
-United Kingdom & 24.5\% \\
-United Arab Emirates & 22.8\% \\
-Lebanon & 22.4\% \\
-\end{longtable}
+\end{tabular}
+\end{table}
 
 \subsection{Data Visualization}
 
-Three visualisations were produced to support exploratory understanding of the dataset's revenue distribution, temporal patterns, and geographic composition.
-
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.85\textwidth]{figures/totalprice_distribution.png}
-  \caption{Distribution of total line-item price (Quantity $\times$ UnitPrice) for clean sales. The distribution is heavily right-skewed, indicating that most transactions are small while a small number of bulk orders generate disproportionately high revenue.}
-  \label{fig:price_dist}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/transaction_value_distribution.png}
+    \caption{Distribution of transaction-level revenue. The distribution is highly right-skewed, indicating that most purchases are low-value while a smaller number of bulk transactions generate disproportionately large revenue.}
+    \label{fig:transaction_value_distribution}
 \end{figure}
 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.85\textwidth]{figures/seasonality_timing.png}
-  \caption{Seasonality and intra-day timing patterns. Monthly aggregation reveals a pronounced sales peak in Q4 (October--November), consistent with pre-Christmas gift-ware demand. Hour-of-day patterns show peak activity during UK business hours (10:00--14:00).}
-  \label{fig:seasonality}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/monthly_sales_trend.png}
+    \caption{Monthly sales trend for clean retail transactions. Revenue shows strong temporal variation, with clear seasonal peaks that motivate the use of time-based features in downstream modeling.}
+    \label{fig:monthly_sales_trend}
 \end{figure}
 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.85\textwidth]{figures/geographic_insights.png}
-  \caption{Geographic revenue distribution. The United Kingdom accounts for the substantial majority of transactions. European markets (Netherlands, Germany, France, EIRE) are the most significant international segments.}
-  \label{fig:geography}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{figures/top_products_revenue.png}
+    \caption{Top 10 products by total revenue. Revenue is concentrated among a small set of products, suggesting that product-level demand history is an important signal for sales analysis and recommendation tasks.}
+    \label{fig:top_products_revenue}
 \end{figure}
+
+The visualizations reveal three important patterns. First, transaction revenue is highly right-skewed, meaning that most purchases are small while a limited number of bulk transactions contribute disproportionately to total revenue. Second, monthly sales show clear seasonal variation, suggesting that calendar-based features are important for demand modeling. Third, revenue is concentrated among a small number of products, supporting the use of product-level features such as historical demand, invoice frequency, and revenue contribution.
+
+\subsection{Key Insights}
+
+Transaction-level revenue is highly right-skewed, with most purchases being low-value and a small number of bulk transactions contributing disproportionately to total revenue. This imbalance introduces sensitivity to outliers, suggesting the need for modeling approaches that can handle skewed target distributions.
+
+Sales exhibit clear seasonal patterns, with a pronounced increase in activity during October and November. This highlights the importance of temporal features such as month and week-of-year for demand modeling and forecasting tasks.
+
+Demand is highly concentrated among a small subset of products, indicating that a limited number of items drive a significant share of overall sales. This concentration suggests that product-level features, including historical demand and purchase frequency, are likely to be strong predictors.
+
+The dataset is heavily dominated by UK transactions, with international markets representing a smaller and more variable share of activity. This imbalance motivates the use of out-of-distribution testing to evaluate model generalization across regions.
+
+
+Key observations:
+\begin{itemize}
+\item Sales are highly skewed, with a small number of products driving a large share of revenue.
+\item The dataset contains a large number of low-value transactions and fewer high-value bulk purchases.
+\item Returns (C-invoices) account for a non-trivial portion of the dataset, confirming the importance of filtering.
+\item Missing CustomerID values remain a limitation, with approximately 20--25\% of transactions lacking customer identifiers, restricting customer-level analysis.
+\end{itemize}
 
 \subsection{Feature Extraction}
 
-Feature extraction targets two downstream modelling objectives: (a)~customer-level segmentation via RFM analysis, and (b)~product-level demand characterisation. Features are derived exclusively from the clean-sales subset.
+Features were derived to support downstream modeling tasks, including customer segmentation and demand prediction.
 
-\subsubsection{RFM Features (customer level)}
+Customer-level features follow the RFM framework:
+\begin{itemize}
+\item Recency: days since last purchase
+\item Frequency: number of invoices
+\item Monetary: total spend
+\end{itemize}
 
-\begin{longtable}{p{0.13\textwidth} p{0.46\textwidth} p{0.32\textwidth}}
-\caption{RFM feature definitions} \label{tab:rfm} \\
+Transaction-level features include:
+\begin{itemize}
+\item TotalPrice (Quantity $\times$ UnitPrice)
+\item Month, DayOfWeek, Hour
+\item Country indicators (e.g., UK vs non-UK)
+\end{itemize}
+
+Product-level features capture demand concentration and purchasing behavior, including total quantity sold, number of customers, and revenue contribution. These features directly support the modeling tasks described in the subsequent sections.
+
+
+\section{Model Training}
+
+\subsection{Train/Test Strategy and Feature Engineering}
+The UK market represents approximately 92\% of invoice volume and is used as the primary training domain. An 80/20 split creates in-distribution UK train/test sets, while non-UK transactions are held out as an out-of-distribution (OOD) test set.
+
+For peak-hour classification, \texttt{IsPeakHour} flags invoices above the 67th percentile of hourly average revenue, computed using UK training data only. Predictors include \texttt{TotalRevenue}, \texttt{TotalQty}, \texttt{NumItems}, \texttt{DayOfWeek}, and \texttt{MonthNum}. For seasonal bulk demand, records are aggregated to product--month level, with \texttt{TotalQty} predicted from \texttt{MonthNum}, \texttt{AvgPrice}, and \texttt{NumInvoices}. Apriori uses product-description sets per UK invoice directly.
+
+For demand spike prediction, transaction data is aggregated daily. The target \texttt{next\_day\_spike} identifies whether the following day's quantity is in the top 25\%, corresponding to approximately 18,460 units. Predictors include lag features, 7-day rolling averages of orders and quantity, calendar variables including week of year, day of week, and their interaction, and a weekend indicator. All predictors use only information available before the prediction day to avoid leakage.
+
+For customer segmentation, RFM features --- Recency, Frequency, and Monetary value --- are constructed at the customer level using 5,851 customers after cleaning. Due to right skew, a log transformation is applied before PCA-based dimensionality reduction. The first three principal components explain 91.6\% of variance and are used as inputs to both K-Means and Hierarchical Clustering.
+
+\subsection{Model Selection}
+\begin{table}[H]
+\centering
+\caption{Model selection and rationale}
+\footnotesize
+\begin{tabularx}{\textwidth}{
+>{\raggedright\arraybackslash\bfseries}p{2.7cm}
+>{\raggedright\arraybackslash}p{3.4cm}
+>{\raggedright\arraybackslash}X}
 \toprule
-\textbf{Feature} & \textbf{Definition} & \textbf{Notes} \\
+Question & Models & Rationale \\
 \midrule
-\endfirsthead
-\multicolumn{3}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Feature} & \textbf{Definition} & \textbf{Notes} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{3}{r}{\small\textit{Continued on next page}} \\
-\endfoot
+When do customers shop?
+& Logistic Regression, LDA
+& Binary classification; LDA checks whether a linear decision boundary is sufficient \\
+Seasonal bulk buying
+& GAM, Regression Spline, Random Forest
+& Captures nonlinear seasonality; RF provides variable importance \\
+If bought X, buy Y
+& Apriori association rules
+& Models co-purchase probability using support, confidence, and lift \\
+Demand spike prediction
+& Decision Tree, Random Forest, GBM
+& Tree-based models capture nonlinear interactions; GBM at threshold 0.3 prioritizes recall under cost-sensitive evaluation, catching 65.5\% of true spike days \\
+Customer segmentation
+& K-Means, Hierarchical Clustering
+& RFM-based clustering identifies actionable customer tiers; both methods independently confirm four segments \\
 \bottomrule
-\endlastfoot
-Recency & Days since the customer's most recent purchase (relative to dataset end date) & Computed per CustomerID; rows with missing CustomerID excluded \\
-Frequency & Total number of distinct invoices associated with the customer & Invoice-level count; each InvoiceNo counted once per customer \\
-Monetary & Total revenue (sum of Quantity $\times$ UnitPrice) attributed to the customer & Gross sales only; returns not netted at this stage \\
-\end{longtable}
+\end{tabularx}
+\end{table}
 
-\subsubsection{Transaction-level Features}
+\section{Model Validation and Performance}
+\textbf{When do customers shop?} Logistic Regression and LDA both achieve 32.3\% UK error and approximately 41.4\% non-UK error. Their near-identical performance suggests a mostly linear boundary, while OOD degradation shows that shopping-hour patterns do not fully transfer internationally.
+"When do customers shop?" has a pattern that is consistent with a wholesale/trade customer base rather than a consumer retailer.
 
-\begin{longtable}{p{0.20\textwidth} p{0.70\textwidth}}
-\caption{Transaction-level derived features} \label{tab:txn_features} \\
+\begin{figure} [H]
+    \centering
+    \includegraphics[width=0.5\linewidth]{when_do_customers_shop.png}
+    \caption{The bulk of transactions happen between roughly 8am and 5pm on weekdays, which makes sense for a B2B-leaning online retailer. Weekends are almost completely dark, meaning virtually no trading activity on Saturdays and Sundays.}
+    \label{fig:when_do_customers_shop}
+\end{figure}
+
+\textbf{Seasonal products and bulk buying.} Cross-validation selected \texttt{df = 11} for the regression spline, indicating a flexible seasonal pattern. GAM ANOVA confirms all predictors are significant ($p < 0.001$). Random Forest importance ranks \texttt{NumInvoices} $\gg$ \texttt{AvgPrice} $>$ \texttt{MonthNum}, meaning reorder frequency is stronger than price or month alone. RF test MSE rises from 138,431 on UK data to 293,590 on non-UK data.
+
+\textbf{If bought X, buy Y.} Apriori on UK invoices produced 1,268 rules using minimum support 0.01 and minimum confidence 0.20. Median lift is 8.2 and maximum lift is 47.7. The strongest rules map to product families such as Poppy's Playhouse sets and coordinated tableware. Most rules transfer internationally with small confidence drops, but some pairs show UK-specific behavior. The exported rules CSV powers the interactive \texttt{Next\_likely\_product.py} recommendation tool.
+
+\textbf{Demand spike prediction.} Three classification models were trained using time series features including lag variables, 7-day rolling averages, and calendar features. A demand spike is defined as any day in the top 25\% of daily sales, approximately above 18,460 units. Random Forest achieved the highest accuracy at 85.7\%, but GBM with a lowered decision threshold of 0.3 was selected as the recommended model under a cost-sensitive objective, where missing a spike is more costly than a false positive. At this threshold, GBM captures 65.5\% of true spike days. The strongest predictors are week of year (27\%), followed by 7-day rolling averages of orders and quantity, indicating that recent sales momentum carries predictive power independently of seasonality. The interaction between week of year and day of week adds further signal, while weekend status has negligible impact.
+
+\begin{table}[H]
+\centering
+\caption{Demand spike model performance}
+\footnotesize
+\begin{tabular}{lcccccc}
 \toprule
-\textbf{Feature} & \textbf{Definition} \\
+& \multicolumn{3}{c}{UK Test} & \multicolumn{3}{c}{Non-UK OOD} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Model & Acc. & Prec. & Rec. & Acc. & Prec. & Rec. \\
 \midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Feature} & \textbf{Definition} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
+Decision Tree & 82.4 & 78.6 & 37.9 & 71.4 & 33.9 & 14.0 \\
+Random Forest & 85.7 & 75.0 & 62.1 & 73.7 & 31.2 & 3.5 \\
+\textbf{GBM} & \textbf{84.9} & \textbf{70.4} & \textbf{65.5} & \textbf{70.1} & \textbf{37.7} & \textbf{28.0} \\
 \bottomrule
-\endlastfoot
-TotalPrice & Quantity $\times$ UnitPrice per line item \\
-Month & Calendar month of InvoiceDate (1--12) \\
-DayOfWeek & Day of week of InvoiceDate (0 = Monday, 6 = Sunday) \\
-Hour & Hour of InvoiceDate (0--23) \\
-IsUK & Binary indicator: Country = United Kingdom \\
-HasCustomerID & Binary indicator: CustomerID is not missing \\
-\end{longtable}
+\end{tabular}
+\end{table}
 
-\subsubsection{Product-level Features}
+\textbf{Customer segmentation.} RFM profiles were constructed for 5,334 customers. Recency measures how recently a customer last purchased, Frequency measures how often they order, and Monetary value measures total spend. Both K-Means and Hierarchical Clustering independently converged on four segments. Segment 1 comprises 1,566 loyal high-value customers averaging 16 orders per year and nearly \pounds9,000 in total spend. Segment 3 is the largest group with 1,917 active mid-tier customers averaging 4 orders per year. Segment 4 contains 1,138 lapsed low-value customers who purchased once or twice and did not return. Segment 2 is the most strategically notable: 1,230 customers with an average order value of \pounds567, comparable to the best customers, but who have placed only 2 orders and have been inactive for over 400 days.
 
-\begin{longtable}{p{0.25\textwidth} p{0.65\textwidth}}
-\caption{Product-level aggregate features} \label{tab:prod_features} \\
+\begin{table}[H]
+\centering
+\caption{Customer Segment Profiles (K-Means, K = 4)}
+\footnotesize
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Feature} & \textbf{Definition} \\
+Segment & Customers & Avg.\ Recency (days) & Avg.\ Frequency & Avg.\ Monetary (\pounds) & Avg.\ Order Value (\pounds) \\
 \midrule
-\endfirsthead
-\multicolumn{2}{l}{\small\textit{(continued from previous page)}} \\
-\toprule
-\textbf{Feature} & \textbf{Definition} \\
-\midrule
-\endhead
-\midrule
-\multicolumn{2}{r}{\small\textit{Continued on next page}} \\
-\endfoot
+1 — Loyal High-Value    & 1,566 & 55  & 15.9 & 8,898 & 546 \\
+2 — Dormant High-Value  & 1,230 & 400 & 1.9  & 1,045 & 567 \\
+3 — Active Mid-Tier     & 1,917 & 90  & 4.0  & 948   & 261 \\
+4 — Lapsed Low-Value    & 1,138 & 372 & 1.6  & 202   & 133 \\
 \bottomrule
-\endlastfoot
-TotalQuantitySold & Sum of Quantity across all clean-sale line items for the product \\
-UniqueCustomers & Count of distinct CustomerIDs that purchased the product \\
-UniqueInvoices & Count of distinct InvoiceNos containing the product \\
-AvgUnitPrice & Mean UnitPrice across all clean-sale line items for the product \\
-RevenueContribution & Product's share of total clean-sales revenue (\%) \\
-\end{longtable}
+\end{tabular}
+\end{table}
+
+\section{Conclusion}
+
+UK stocking decisions can be improved by aligning inventory with October-November demand peaks, stocking high-lift co-purchase families together, and using GBM-based spike alerts for proactive restocking. Across models, invoice frequency and rolling demand momentum are more reliable signals than price, weekends, or single-day activity. Customer segmentation further enables targeted re-engagement: Segment 2 alone represents a recoverable revenue opportunity exceeding \pounds250,000 if 20\% of dormant high-value customers are reactivated.
+
+\textbf{Positive results:}
+\begin{itemize}
+  \item 1,067,371 records were cleaned and modeled with reproducible workflows.
+  \item UK shopping concentrates in business hours with negligible weekend activity.
+  \item Apriori extracted 1,268 interpretable co-purchase rules.
+  \item GBM (threshold 0.3) achieved 65.5\% recall for UK demand spike prediction, capturing the majority of high-demand days before they occur.
+  \item RFM clustering identified four actionable customer segments across 5,334 customers, with both K-Means and Hierarchical Clustering independently agreeing on the same structure.
+  \item OOD testing consistently revealed international transfer degradation.
+\end{itemize}
+
+\textbf{Caveats and recommendations:}
+\begin{itemize}
+  \item Peak-hour error remains high, so basket features alone are weak timing predictors.
+  \item 22.8\% missing \texttt{CustomerID} values limit customer-level segmentation.
+  \item Demand spike models do not generalize reliably to non-UK markets.
+  \item Niche products below Apriori support thresholds are excluded from rules.
+  \item A sequential rule mining approach (like SPADE or PrefixSpan) would tell what customers buy on their next visit after buying X. Knowing this could help with retention.
+  \item Region-specific models should replace a single global model.
+  \item A deep learning model for predicting upcoming orders and revenue would need more data and richer features, but it's a natural extension of what we've built here.
+\end{itemize}
+
+\section{Data Sources and Code}
+
+\footnotesize
+\textbf{Dataset:} Online Retail II Dataset, UCI Machine Learning Repository. 
+\url{https://archive.ics.uci.edu/dataset/502/online+retail+ii}
+
+\textbf{Code:} \url{https://github.com/CAWang16/business_data_prep/tree/main}
+
+\section{Bibliography}
+
+\footnotesize
+Bult, J.R., and Wansbeek, T. (1995). Optimal selection for direct mail. \textit{Marketing Science}, 14(4), 378--394.
+
+Chen, D., Sain, S.L., and Guo, K. (2012). Data mining for the online retail industry. \textit{Journal of Database Marketing \& Customer Strategy Management}, 19(3), 197--208.
+
+Rahm, E., and Do, H.H. (2000). Data cleaning: Problems and current approaches. \textit{IEEE Data Engineering Bulletin}, 23(4), 3--13.
 
 \end{document}
