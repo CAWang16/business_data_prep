@@ -24,7 +24,5 @@ python scripts/09_quick_db_test_validation.py
 Rscript scripts/10_Seasonal_products_and_bulk_buying.R
 Rscript scripts/11_When_do_customers_shop.R
 
-python scripts/12_generate_report.py
-python scripts/13_generate_report_tex.py
 
 echo "Full project pipeline finished successfully."
