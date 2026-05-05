@@ -15,6 +15,9 @@ data/processed/*
 *.pdf
 *.png
 
+# macOS metadata
+.DS_Store
+
 # Windows download metadata
 *.Identifier
 
